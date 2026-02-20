@@ -1,0 +1,21 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Pliki nagłówkowe">
+      <UniqueIdentifier>{e89b5943-203e-401b-8615-fe64baa139c2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Pliki źródłowe">
+      <UniqueIdentifier>{4899bc44-b05e-4859-b013-df12ae1d16cc}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <MASM Include="Blur.asm">
+      <Filter>Pliki źródłowe</Filter>
+    </MASM>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Blur.def">
+      <Filter>Pliki źródłowe</Filter>
+    </None>
+  </ItemGroup>
+</Project>
