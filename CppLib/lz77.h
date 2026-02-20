@@ -1,6 +1,6 @@
 /********************************************************************************
- * TEMAT PROJEKTU: Algorytm LZ77 do kompresji obrazków
- * OPIS ALGORYTMU: Implementacja algorytmu LZ77 do kompresji obrazków –
+ * TEMAT PROJEKTU: Algorytm LZ77 do kompresji obrazkow
+ * OPIS ALGORYTMU: Implementacja algorytmu LZ77 do kompresji obrazkow –
  *                 odpowiednik kodu asemblerowego MASM x64 napisany w C++
  * DATA WYKONANIA: luty 2026 r.
  * SEMESTR / ROK AKADEMICKI: Semestr Zimowy 2025/2026
@@ -15,29 +15,61 @@
 extern "C" {
 #endif
 
+    /*
+     * lz77_rgba_compress
+     *
+     * Kompresuje tablice pikseli RGBA do strumienia tokenow LZ77.
+     *
+     * Parametry:
+     *   src_px    – wejscie: tablica pikseli RGBA (uint32_t kazdy)
+     *   src_count – liczba pikseli wejsciowych
+     *   dst       – wyjscie: bufor na skompresowane tokeny
+     *   dst_cap   – pojemnosc bufora wyjsciowego w bajtach
+     *   work      – bufor roboczy (min. LZ77_WORK_NEED_BYTES)
+     *   work_cap  – pojemnosc bufora roboczego w bajtach
+     *   out_len   – [out] liczba zapisanych bajtow (0 = blad lub brak wejscia)
+     */
     __declspec(dllexport)
         void lz77_rgba_compress(
-            const uint32_t* src_px,      // wejœcie: tablica pikseli RGBA
-            size_t          src_count,   // liczba pikseli
-            uint8_t* dst,         // wyjœcie: bufor na tokeny
-            size_t          dst_cap,     // pojemnoœæ bufora wyjœciowego w bajtach
-            void* work,        // bufor roboczy (min. WORK_NEED_BYTES)
-            size_t          work_cap,    // pojemnoœæ bufora roboczego w bajtach
-            size_t* out_len      // [out] liczba zapisanych bajtów (0 = b³¹d)
+            const uint32_t* src_px,
+            size_t          src_count,
+            uint8_t* dst,
+            size_t          dst_cap,
+            void* work,
+            size_t          work_cap,
+            size_t* out_len
         );
 
+    /*
+     * lz77_rgba_decompress
+     *
+     * Dekompresuje strumien tokenow LZ77 z powrotem do tablicy pikseli RGBA.
+     *
+     * Parametry:
+     *   src     – wejscie: skompresowany strumien tokenow
+     *   src_len – dlugosc strumienia w bajtach
+     *   dst_px  – wyjscie: tablica pikseli RGBA
+     *   dst_cap – pojemnosc bufora wyjsciowego w pikselach
+     *   out_len – [out] liczba zdekompresowanych pikseli (0 = blad)
+     */
     __declspec(dllexport)
         void lz77_rgba_decompress(
-            const uint8_t* src,         // wejœcie: skompresowany strumieñ
-            size_t          src_len,     // d³ugoœæ strumienia w bajtach
-            uint32_t* dst_px,      // wyjœcie: tablica pikseli RGBA
-            size_t          dst_cap,     // pojemnoœæ bufora wyjœciowego w pikselach
-            size_t* out_len      // [out] liczba zdekompresowanych pikseli (0 = b³¹d)
+            const uint8_t* src,
+            size_t          src_len,
+            uint32_t* dst_px,
+            size_t          dst_cap,
+            size_t* out_len
         );
 
-    // Minimalny rozmiar bufora roboczego wymaganego przez lz77_rgba_compress
-    // head[65536] = 256 KB  +  prev[4096] = 16 KB
-    static const size_t LZ77_WORK_NEED_BYTES = (65536 + 4096) * sizeof(uint32_t);
+    /*
+     * LZ77_WORK_NEED_BYTES
+     *
+     * Minimalny rozmiar bufora roboczego wymaganego przez lz77_rgba_compress:
+     *   head[65536 wpisow] = 256 KB
+     *   prev[ 4096 wpisow] =  16 KB
+     *   Razem             = 272 KB
+     */
+    static const size_t LZ77_WORK_NEED_BYTES = (65536u + 4096u) * sizeof(uint32_t);
 
 #ifdef __cplusplus
 }

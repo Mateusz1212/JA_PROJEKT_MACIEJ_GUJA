@@ -1,11 +1,7 @@
 {
   "Version": 1,
   "WorkspaceRootPath": "C:\\Users\\user\\Desktop\\JA_PROJEKT_MACIEJ_GUJA\\Projekt_JA\\",
-  "Documents": [
-    {
-      "AbsoluteMoniker": "D:0:0:{66B3C8F0-7EFE-4429-852E-3EEE0167BFE9}|..\\AsmDll\\AsmDll.vcxproj|C:\\Users\\user\\Desktop\\JA_PROJEKT_MACIEJ_GUJA\\AsmDll\\lz77.asm||{8B382828-6202-11D1-8870-0000F87579D2}"
-    }
-  ],
+  "Documents": [],
   "DocumentGroupContainers": [
     {
       "Orientation": 0,
@@ -13,7 +9,7 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 2,
+          "SelectedChildIndex": -1,
           "Children": [
             {
               "$type": "Bookmark",
@@ -24,17 +20,8 @@
               "Name": "ST:0:0:{1c64b9c2-e352-428e-a56d-0ace190b99a6}"
             },
             {
-              "$type": "Document",
-              "DocumentIndex": 0,
-              "Title": "lz77.asm",
-              "DocumentMoniker": "C:\\Users\\user\\Desktop\\JA_PROJEKT_MACIEJ_GUJA\\AsmDll\\lz77.asm",
-              "RelativeDocumentMoniker": "..\\AsmDll\\lz77.asm",
-              "ToolTip": "C:\\Users\\user\\Desktop\\JA_PROJEKT_MACIEJ_GUJA\\AsmDll\\lz77.asm",
-              "RelativeToolTip": "..\\AsmDll\\lz77.asm",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAYAAAAWAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
-              "WhenOpened": "2026-02-20T05:25:08.993Z",
-              "EditorCaption": ""
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{1c4feeaa-4718-4aa9-859d-94ce25d182ba}"
             }
           ]
         }
