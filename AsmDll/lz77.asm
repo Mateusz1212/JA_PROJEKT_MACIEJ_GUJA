@@ -1,54 +1,20 @@
 ; ============================================================
 ; LZ77 RGBA (u32 pixels) - MASM x64, SSE2, Windows x64 ABI
 ; Format tokenu: Token12 { offset_px:u32, length_px:u32, next_px:u32 }
-; Brak alokacji pamieci. Brak zmiennych globalnych.
-; Bezpieczne dla uzycia wielowatkowego.
 ;
-; Sygnatura kompresji:
-;   void lz77_rgba_compress(
-;       const uint32_t* src_px,  RCX
-;       size_t src_count_px,     RDX
-;       uint8_t* dst,            R8
-;       size_t dst_cap_bytes,    R9
-;       void* work,              [rsp+40h] -- po prologu: [rsp+78h]
-;       size_t work_cap_bytes,   [rsp+48h] -- po prologu: [rsp+80h]
-;       size_t* out_len_bytes    [rsp+50h] -- po prologu: [rsp+88h]
-;   )
-;
-; Sygnatura dekompresji:
-;   void lz77_rgba_decompress(
-;       const uint8_t* src,      RCX
-;       size_t src_len_bytes,    RDX
-;       uint32_t* dst_px,        R8
-;       size_t dst_cap_px,       R9
-;       size_t* out_len_px       [rsp+40h] -- po prologu: [rsp+68h]
-;   )
-;
-; Obliczenie offsetow argumentow na stosie:
-;   Prolog kompresji:  8x push (8*8=64B) + sub rsp,16 = 80B lacznie
-;     arg5 (work)         = [rsp + 80 + 40] = [rsp + 78h]
-;     arg6 (work_cap)     = [rsp + 80 + 48] = [rsp + 80h]
-;     arg7 (out_len*)     = [rsp + 80 + 56] = [rsp + 88h]
-;   Prolog dekompresji: 8x push (8*8=64B), brak sub rsp
-;     arg5 (out_len_px*)  = [rsp + 64 + 40] = [rsp + 68h]
-;
-; SSE2 - trzy miejsca uzycia:
-;   1. Inicjalizacja head[] (pcmpeqd + movdqu x4096 iteracji)
-;   2. Porownanie kandydatow w kompresji (pcmpeqd + pmovmskb, bloki 4px=16B)
-;   3. Kopiowanie dopasowania w dekompresji (movdqu, bloki 4px=16B)
-;
-; Analiza bezpieczenstwa SSE2 w kompresji (punkt 2):
-;   Warunek wejscia do bloku 16B: curLen+4 <= maxMatch <= remaining-1.
-;   Zatem indeks i+curLen+3 < src_count_px => odczyt 16B jest w granicach.
-;   Kandydat: candidate+curLen+3 < i <= src_count_px => analogicznie bezpieczny.
-;   Warto o tym pamietac przy zmianie MAX_MATCH_PX.
-;
-; Analiza bezpieczenstwa SSE2 w dekompresji (punkt 3):
-;   Blok 16B jest uzywany tylko gdy offset_px >= 4 (16B dystansu miedzy
-;   wskaznikiem zrodla a celem). Dzieki temu pierwszy odczyt 16B nie pokrywa
-;   sie z pierwszym zapisem 16B. Kolejne iteracje moga czytac juz zapisane
-;   piksele -- jest to zamierzone i daje poprawna semantyke LZ77/RLE.
-;   Przy offset_px < 4 stosowane jest kopiowanie skalarne piksel-po-pikselu.
+; Poprawki zastosowane w tej wersji:
+;  1) POPRAWNE offsety argumentow stosowych dla kompresji:
+;       prolog = 8*push (0x40) + sub rsp,16 (0x10) = 0x50
+;       arg5=[rsp+78h], arg6=[rsp+80h], arg7=[rsp+88h]
+;  2) NIE uzywamy XMM6-15 (non-volatile). Uzywamy XMM2 (volatile) do init.
+;  3) bestOff NIE jest trzymany w EDX (EDX jest scratch). bestOff w localu.
+;  4) Bezpiecznik A: jesli bestLen>0, wymagaj bestOff!=0 i bestOff<=i, inaczej literal.
+;  5) Bezpiecznik B: jesli bestLen>maxMatch, wymus literal (chroni next_px i spojnosc).
+;  6) Bezpiecznik C: jesli bestLen>0 ale bestOff==0, literal (spojne z dekompresorem).
+;  7) Zachowane sensowne SSE2:
+;       - init head[] movdqu
+;       - porownanie kandydatow 16B (4 px)
+;       - kopiowanie w dekompresji 16B
 ; ============================================================
 
 OPTION PROLOGUE:NONE
@@ -56,68 +22,43 @@ OPTION EPILOGUE:NONE
 
 .code
 
-; --------------------------------------------------
-; Stale konfiguracyjne
-; --------------------------------------------------
-WINDOW_PX       EQU 4096               ; okno slizgowe w pikselach (potega 2)
-HASH_SIZE       EQU 65536              ; liczba wpisow tablicy hash (potega 2)
+WINDOW_PX       EQU 4096
+HASH_SIZE       EQU 65536
 HASH_MASK       EQU (HASH_SIZE - 1)
-MAX_MATCH_PX    EQU 64                 ; maks. dlugosc dopasowania w pikselach
-MAX_CANDIDATES  EQU 32                 ; maks. liczba krokow w lancuchu hash
-TOKEN_SIZE      EQU 12                 ; rozmiar tokenu: 3 x sizeof(u32)
-INVALID_POS     EQU 0FFFFFFFFh        ; znacznik pustego slotu w tablicach hash
+MAX_MATCH_PX    EQU 64
+MAX_CANDIDATES  EQU 32
+TOKEN_SIZE      EQU 12
+INVALID_POS     EQU 0FFFFFFFFh
 
-; Uklad bufora roboczego (dostarczanego przez wywolujacego):
-;   [0              .. HASH_SIZE*4)  : head[HASH_SIZE] u32
-;      hash    -> najnowsza pozycja piksela o tym hashu
-;   [HASH_SIZE*4    .. +WINDOW_PX*4) : prev[WINDOW_PX] u32
-;      slot(i) -> poprzednia pozycja o tym samym hashu (lancuch)
-WORK_HEAD_BYTES EQU (HASH_SIZE * 4)   ; 262144 B = 256 KB
-WORK_PREV_BYTES EQU (WINDOW_PX * 4)   ;  16384 B =  16 KB
-WORK_NEED_BYTES EQU (WORK_HEAD_BYTES + WORK_PREV_BYTES)
+WORK_HEAD_BYTES EQU (HASH_SIZE * 4)     ; 262144
+WORK_PREV_BYTES EQU (WINDOW_PX * 4)     ; 16384
+WORK_NEED_BYTES EQU (WORK_HEAD_BYTES + WORK_PREV_BYTES) ; 278528
 
-; --------------------------------------------------
-; Offsety argumentow na stosie po prologu - kompresja
-; (8 push + sub rsp,16 = 80B przesuniecia)
-; --------------------------------------------------
+; --- stack args after prolog (0x50 bytes) ---
 COMP_ARG_WORK     EQU 078h
 COMP_ARG_WORKCAP  EQU 080h
 COMP_ARG_OUTLEN   EQU 088h
 
-; Zmienne lokalne w przestrzeni [rsp+0 .. rsp+15]:
-;   [rsp+0]  DWORD chain_remaining -- ile krokow lancucha pozostalo
-;   [rsp+4]  DWORD candidate_save  -- indeks biezacego kandydata
-;   [rsp+8]  DWORD offset_px_save  -- offset biezacego kandydata (i - candidate)
-;   [rsp+12] DWORD (padding)
-LOCAL_CHAIN  EQU 0
-LOCAL_CAND   EQU 4
-LOCAL_OFFSET EQU 8
+; --- locals: 16 bytes ---
+; [rsp+0]  DWORD chain_remaining
+; [rsp+4]  DWORD candidate_save
+; [rsp+8]  DWORD offset_save
+; [rsp+12] DWORD bestoff_save
+LOCAL_CHAIN   EQU 0
+LOCAL_CAND    EQU 4
+LOCAL_OFFSET  EQU 8
+LOCAL_BESTOFF EQU 12
 
-; --------------------------------------------------
-; Offset argumentu na stosie po prologu - dekompresja
-; (8 push = 64B przesuniecia, brak sub rsp)
-; --------------------------------------------------
+; --- decompress arg5 after prolog (0x40 bytes) ---
 DECOMP_ARG_OUTLEN EQU 068h
+
 
 ; ============================================================
 ; lz77_rgba_compress
-;
-; Stala mapa rejestrów nieulotnych (przez cala funkcje):
-;   rsi = src_px          wskaznik do tablicy pikseli wejsciowych (u32*)
-;   r14 = src_count_px    liczba pikseli wejsciowych
-;   rdi = dst             bufor wyjsciowy (u8*)
-;   r15 = dst_cap_bytes   pojemnosc bufora wyjsciowego w bajtach
-;   rbx = head_base       poczatek tablicy head[] w buforze roboczym (u32*)
-;   rbp = prev_base       poczatek tablicy prev[] = head_base + WORK_HEAD_BYTES
-;   r12 = out_bytes       liczba bajtow zapisanych do dst
-;   r13 = out_len_ptr     wskaznik do *out_len_bytes
-;   r8  = i               biezacy indeks piksela (u64)
-;
-; Rejestry tymczasowe: rax, rcx, rdx, r9, r10, r11, xmm0, xmm1, xmm7
 ; ============================================================
 PUBLIC lz77_rgba_compress
 lz77_rgba_compress PROC
-    ; --- Prolog: zachowaj rejestry nieulotne ---
+    ; prolog
     push rbx
     push rbp
     push rsi
@@ -126,264 +67,260 @@ lz77_rgba_compress PROC
     push r13
     push r14
     push r15
-    sub  rsp, 16                   ; 16B na zmienne lokalne (LOCAL_*)
-    ; Lacznie przesuniecia RSP: 8*8 + 16 = 80B
+    sub  rsp, 16
 
-    ; --- Zaladuj argumenty ---
-    mov  rsi, rcx                               ; src_px
-    mov  r14, rdx                               ; src_count_px
-    mov  rdi, r8                                ; dst
-    mov  r15, r9                                ; dst_cap_bytes
-    mov  rbx, QWORD PTR [rsp + COMP_ARG_WORK]  ; work (head_base)
-    mov  rax, QWORD PTR [rsp + COMP_ARG_WORKCAP] ; work_cap_bytes (temp)
-    mov  r13, QWORD PTR [rsp + COMP_ARG_OUTLEN] ; out_len_bytes*
+    ; args regs
+    mov  rsi, rcx                 ; src_px
+    mov  r14, rdx                 ; src_count_px
+    mov  rdi, r8                  ; dst
+    mov  r15, r9                  ; dst_cap_bytes
 
-    xor  r12d, r12d                             ; out_bytes = 0
+    ; args stack
+    mov  rbx, QWORD PTR [rsp + COMP_ARG_WORK]      ; work
+    mov  rax, QWORD PTR [rsp + COMP_ARG_WORKCAP]   ; work_cap
+    mov  r13, QWORD PTR [rsp + COMP_ARG_OUTLEN]    ; out_len*
 
-    ; Minimalny bufor wyjsciowy: 1 token
+    xor  r12d, r12d               ; out_bytes=0
+
+    ; dst_cap >= 1 token
     cmp  r15, TOKEN_SIZE
     jb   LZC_FAIL
 
-    ; Puste wejscie: sukces, 0 bajtow
+    ; empty input
     test r14, r14
     jz   LZC_DONE
 
-    ; Brak bufora roboczego lub za maly => tryb samych literalow
+    ; no/too small work => literal only
     test rbx, rbx
     jz   LZC_LITERAL_ONLY
     cmp  rax, WORK_NEED_BYTES
     jb   LZC_LITERAL_ONLY
 
-    ; prev_base lezy bezposrednio za head[] w buforze roboczym
-    lea  rbp, [rbx + WORK_HEAD_BYTES]
+    lea  rbp, [rbx + WORK_HEAD_BYTES]   ; prev_base
 
-    ; --- SSE2: wypelnij head[] wartoscia INVALID_POS (0xFFFFFFFF) ---
-    ; xmm7 = { 0xFFFFFFFF x4 } -- rejestr SSE2 z samymi jedynkami
-    pcmpeqd xmm7, xmm7                         ; all-ones przez porownanie ze soba
-    mov  rcx, WORK_HEAD_BYTES / 16             ; 4096 blokow po 16B = 256 KB
-    mov  rax, rbx                               ; wskaznik zapisu
+    ; SSE2 init head[] = 0xFFFFFFFF (use XMM2 volatile)
+    pcmpeqd xmm2, xmm2
+    mov  rcx, WORK_HEAD_BYTES / 16
+    mov  rax, rbx
 LZC_INIT_HEAD:
-    movdqu XMMWORD PTR [rax], xmm7             ; 4 x INVALID_POS naraz
+    movdqu XMMWORD PTR [rax], xmm2
     add  rax, 16
     dec  rcx
     jnz  LZC_INIT_HEAD
-    ; prev[] nie wymaga inicjalizacji: kazdy slot jest nadpisywany
-    ; starym head[hash] przed pierwszym odczytem.
 
-    xor  r8d, r8d                               ; i = 0
+    xor  r8d, r8d                 ; i = 0
 
 ; ============================================================
-; Glowna petla kompresji
-; i (r8) jest inkrementowane o (bestLen+1) po kazdej iteracji.
+; main loop
 ; ============================================================
 LZC_MAIN:
-    cmp  r8, r14                                ; i >= src_count_px?
+    cmp  r8, r14
     jae  LZC_DONE
 
-    ; remaining = src_count_px - i
+    ; remaining = src_count - i
     mov  r9, r14
     sub  r9, r8
 
-    ; Ostatni piksel (remaining==1): brak miejsca na next_px po dopasowaniu,
-    ; wyslij jako literal (offset=0, length=0, next=src[i]).
-    ; Uwaga: ten piksel NIE jest wstawiany do tablic hash, bo nie jest
-    ; kandydatem dla przyszlych dopasowan (jest ostatni).
+    ; remaining==1 => literal (do not insert)
     cmp  r9, 1
     je   LZC_EMIT_LITERAL
 
     ; maxMatch = min(MAX_MATCH_PX, remaining-1)
-    ; Odejmujemy 1: token zawsze przechowuje jawny "nastepny piksel" po dopasowaniu.
     mov  r10, r9
     dec  r10
     cmp  r10, MAX_MATCH_PX
     jbe  LZC_MAX_OK
     mov  r10, MAX_MATCH_PX
-LZC_MAX_OK:                                    ; r10 = maxMatch
+LZC_MAX_OK:                         ; r10 = maxMatch (u64), use r10d when comparing lengths
 
-    ; --- Hash dwupikselowy: (src[i] XOR ROL(src[i+1], 5)) & HASH_MASK ---
-    ; Dwa piksele sa dostepne (remaining >= 2).
-    mov  eax, DWORD PTR [rsi + r8*4]           ; p0 = src[i]
-    mov  edx, DWORD PTR [rsi + r8*4 + 4]       ; p1 = src[i+1]
+    ; hash(i) = (p0 XOR ROL(p1,5)) & MASK
+    mov  eax, DWORD PTR [rsi + r8*4]
+    mov  edx, DWORD PTR [rsi + r8*4 + 4]
     rol  edx, 5
     xor  eax, edx
-    and  eax, HASH_MASK                         ; eax = hash
+    and  eax, HASH_MASK
 
-    ; dictStart = max(0, i - WINDOW_PX) -- najstarsza dopuszczalna pozycja
-    xor  r11d, r11d                             ; dictStart = 0
+    ; dictStart = max(0, i - WINDOW_PX)
+    xor  r11d, r11d
     cmp  r8, WINDOW_PX
     jb   LZC_DICT_OK
     mov  r11, r8
-    sub  r11, WINDOW_PX                         ; r11 = dictStart
+    sub  r11, WINDOW_PX
 LZC_DICT_OK:
 
-    ; Pobierz pierwszego kandydata z head[hash]
-    mov  ecx, DWORD PTR [rbx + rax*4]          ; ecx = head[hash]
+    ; candidate = head[hash]
+    mov  ecx, DWORD PTR [rbx + rax*4]
 
-    ; Wyzeruj najlepszy wynik
-    xor  r9d, r9d                               ; bestLen = 0
-    xor  edx, edx                               ; bestOff = 0
+    ; bestLen=0
+    xor  r9d, r9d
+    ; bestOff=0
+    mov  DWORD PTR [rsp + LOCAL_BESTOFF], 0
 
-    ; Inicjuj licznik krokow lancucha w zmiennej lokalnej
     mov  DWORD PTR [rsp + LOCAL_CHAIN], MAX_CANDIDATES
 
 ; ============================================================
-; Przeszukiwanie lancucha hash (hash-chain traversal)
-; Przechodzi przez kolejnych kandydatow az do MAX_CANDIDATES krokow.
+; chain loop
 ; ============================================================
 LZC_CHAIN_LOOP:
     cmp  ecx, INVALID_POS
-    je   LZC_CHAIN_DONE                         ; koniec lancucha
+    je   LZC_CHAIN_DONE
 
-    ; Kandydat poza oknem? (rcx=zero-extend(ecx) umozliwia porownanie u64)
     cmp  rcx, r11
-    jb   LZC_CHAIN_DONE                         ; wyszlismy poza WINDOW_PX
+    jb   LZC_CHAIN_DONE
 
-    ; offset = i - candidate (zawsze > 0, bo candidate < i)
+    ; offset = i - candidate
     mov  eax, r8d
-    sub  eax, ecx                               ; eax = offset_px
+    sub  eax, ecx
 
-    ; Zapisz kandydata i offset w zmiennych lokalnych (rcx/eax beda zmienione)
     mov  DWORD PTR [rsp + LOCAL_CAND],   ecx
     mov  DWORD PTR [rsp + LOCAL_OFFSET], eax
 
-    ; ptrB = &src[candidate] -- rcx: mov ecx,ecx zero-extend jest tu zbedne,
-    ; bo 'mov ecx, DWORD PTR [...]' juz zero-extenduje do 64b w rcx.
-    lea  rcx, [rsi + rcx*4]                    ; rcx = ptrB (bajty)
+    lea  rcx, [rsi + rcx*4]          ; ptrB
+    xor  eax, eax                    ; curLen=0
 
-    ; curLen = 0 -- liczba pasujacych pikseli od pozycji i i candidate
-    xor  eax, eax
-
-    ; --- SSE2: porownanie blokow 4 pikseli (16 bajtow) ---
-    ; Bezpieczne granicznie: curLen+4 <= maxMatch <= remaining-1,
-    ; wiec i+curLen+3 < src_count_px.
+; SSE2 16B blocks (4 px)
 LZC_CMP_BLOCK:
     lea  edx, [eax + 4]
-    cmp  edx, r10d                              ; curLen+4 > maxMatch?
+    cmp  edx, r10d                   ; curLen+4 > maxMatch ?
     ja   LZC_CMP_SCALAR
 
-    ; ptrA = &src[i + curLen]; nie mamy wolnego rejestru na staly ptrA,
-    ; wiec obliczamy indeks przez lea i uzywamy rsi jako bazy.
-    lea  rdx, [r8 + rax]                        ; rdx = i + curLen (indeks px)
-    movdqu xmm0, XMMWORD PTR [rsi + rdx*4]    ; 4 piksele ze zrodla (ptrA)
-    movdqu xmm1, XMMWORD PTR [rcx + rax*4]    ; 4 piksele z kandydata (ptrB)
-    pcmpeqd xmm0, xmm1                         ; porownaj DWORD-parami
-    pmovmskb edx, xmm0                         ; maska: bit=1 gdy bajt zgodny
-    cmp  edx, 0FFFFh                            ; wszystkie 16 bajtow pasuja?
-    jne  LZC_CMP_SCALAR                         ; niezgodnosc -- doczyszcz skalarnie
-    add  eax, 4                                 ; curLen += 4 piksele
+    lea  rdx, [r8 + rax]             ; i + curLen
+    movdqu xmm0, XMMWORD PTR [rsi + rdx*4]
+    movdqu xmm1, XMMWORD PTR [rcx + rax*4]
+    pcmpeqd xmm0, xmm1
+    pmovmskb edx, xmm0
+    cmp  edx, 0FFFFh
+    jne  LZC_CMP_SCALAR
+    add  eax, 4
     jmp  LZC_CMP_BLOCK
 
+; scalar tail
 LZC_CMP_SCALAR:
-    ; Skalarne porownanie: piksel po pikselu dla reszty (<4 px) lub
-    ; po wyjsciu z bloku SSE2 z czesciowa niezgodnoscia.
-    cmp  eax, r10d                              ; curLen >= maxMatch?
+    cmp  eax, r10d
     jae  LZC_CMP_DONE
     lea  rdx, [r8 + rax]
-    mov  edx, DWORD PTR [rsi + rdx*4]          ; src[i + curLen]
-    cmp  edx, DWORD PTR [rcx + rax*4]          ; src[candidate + curLen]
+    mov  edx, DWORD PTR [rsi + rdx*4]
+    cmp  edx, DWORD PTR [rcx + rax*4]
     jne  LZC_CMP_DONE
     inc  eax
     jmp  LZC_CMP_SCALAR
 
 LZC_CMP_DONE:
-    ; eax = curLen tego kandydata; zaktualizuj najlepszy wynik
-    cmp  eax, r9d                               ; curLen > bestLen?
+    cmp  eax, r9d
     jle  LZC_NO_IMPROVE
-    mov  r9d, eax                               ; bestLen = curLen
-    mov  edx, DWORD PTR [rsp + LOCAL_OFFSET]   ; bestOff = offset tego kandydata
+    mov  r9d, eax
+    mov  edx, DWORD PTR [rsp + LOCAL_OFFSET]
+    mov  DWORD PTR [rsp + LOCAL_BESTOFF], edx
 LZC_NO_IMPROVE:
 
-    ; Przejdz do nastepnego kandydata przez tablice prev[]
-    mov  ecx, DWORD PTR [rsp + LOCAL_CAND]     ; przywroc indeks biezacego kand.
+    ; next candidate via prev[slot]
+    mov  ecx, DWORD PTR [rsp + LOCAL_CAND]
     mov  eax, ecx
-    and  eax, (WINDOW_PX - 1)                  ; slot = candidate & (WINDOW_PX-1)
-    mov  ecx, DWORD PTR [rbp + rax*4]          ; candidate = prev[slot]
+    and  eax, (WINDOW_PX - 1)
+    mov  ecx, DWORD PTR [rbp + rax*4]
 
     dec  DWORD PTR [rsp + LOCAL_CHAIN]
     jnz  LZC_CHAIN_LOOP
 
 LZC_CHAIN_DONE:
-    ; r9d = bestLen (0 = brak dopasowania => literal)
-    ; edx = bestOff (0 gdy brak dopasowania)
+
+    ; ============================================================
+    ; Bezpiecznik B: bestLen <= maxMatch
+    ; (chroni odczyt next_px i semantyke)
+    ; ============================================================
+    cmp  r9d, r10d
+    jbe  LZC_LEN_OK
+    xor  r9d, r9d
+    mov  DWORD PTR [rsp + LOCAL_BESTOFF], 0
+LZC_LEN_OK:
+
+    ; ============================================================
+    ; Bezpiecznik A/C: dla match bestLen>0 wymagaj:
+    ;   bestOff != 0 i bestOff <= i
+    ; inaczej literal
+    ; ============================================================
+    test r9d, r9d
+    jz   LZC_EMIT_TOKEN
+
+    mov  edx, DWORD PTR [rsp + LOCAL_BESTOFF]
+    test edx, edx
+    jz   LZC_FORCE_LITERAL
+    cmp  edx, r8d
+    ja   LZC_FORCE_LITERAL
+    jmp  LZC_EMIT_TOKEN
+
+LZC_FORCE_LITERAL:
+    xor  r9d, r9d
+    mov  DWORD PTR [rsp + LOCAL_BESTOFF], 0
 
 ; ============================================================
-; Emisja tokenu { bestOff, bestLen, next_px }
+; emit token
 ; ============================================================
 LZC_EMIT_TOKEN:
-    ; Sprawdz wolne miejsce w dst
+    ; space check
     mov  rax, r15
     sub  rax, r12
     cmp  rax, TOKEN_SIZE
     jb   LZC_FAIL
 
-    ; next_px = src[i + bestLen] gdy bestLen>0, lub src[i] gdy literal
-    ; Oblicz przed uzyciem rcx do adresowania tokenu.
+    ; next_px
     test r9d, r9d
     jz   LZC_NEXT_LIT
-    lea  rax, [r8 + r9]                         ; i + bestLen (64-bit, bez overflow)
-    mov  eax, DWORD PTR [rsi + rax*4]           ; src[i + bestLen]
+
+    ; (bezpiecznie: bestLen <= maxMatch <= remaining-1, wiec i+bestLen < src_count)
+    lea  rax, [r8 + r9]
+    mov  eax, DWORD PTR [rsi + rax*4]
     jmp  LZC_NEXT_READY
 LZC_NEXT_LIT:
-    mov  eax, DWORD PTR [rsi + r8*4]            ; src[i]
-LZC_NEXT_READY:                                 ; eax = next_px
+    mov  eax, DWORD PTR [rsi + r8*4]
+LZC_NEXT_READY:
 
-    ; Zapisz token w dst[out_bytes]
+    mov  edx, DWORD PTR [rsp + LOCAL_BESTOFF]
+
     lea  rcx, [rdi + r12]
-    mov  DWORD PTR [rcx + 0], edx               ; token.offset_px = bestOff
-    mov  DWORD PTR [rcx + 4], r9d               ; token.length_px = bestLen
-    mov  DWORD PTR [rcx + 8], eax               ; token.next_px
-    add  r12, TOKEN_SIZE                         ; out_bytes += 12
+    mov  DWORD PTR [rcx + 0], edx
+    mov  DWORD PTR [rcx + 4], r9d
+    mov  DWORD PTR [rcx + 8], eax
+    add  r12, TOKEN_SIZE
 
-    ; --- Aktualizacja tablic hash dla pozycji [i .. i+bestLen] ---
-    ; Wstawiamy bestLen+1 wpisow: kazda nowa pozycja startowa dopasowania
-    ; staje sie poczatkiem lancucha dla swojego hasha.
-    ; Uwaga edge-case: jesli bestLen==0, wstawiamy dokladnie 1 pozycje (i),
-    ; co jest poprawne -- literal rowniez ma sens jako kandydat.
-    mov  r10d, r9d                              ; r10d = bestLen (zachowaj)
-    xor  eax, eax                               ; k = 0
+    ; insert positions [i .. i+bestLen]
+    mov  r10d, r9d
+    xor  eax, eax
 
 LZC_INSERT_LOOP:
-    cmp  eax, r10d                              ; k > bestLen?
+    cmp  eax, r10d
     ja   LZC_INSERT_DONE
 
-    ; pos = i + k
     mov  ecx, r8d
-    add  ecx, eax                               ; ecx = pos (u32)
+    add  ecx, eax                ; pos
 
-    ; Do hasha potrzeba par (src[pos], src[pos+1]): sprawdz granice
-    lea  rdx, [rcx + 1]                         ; pos+1 jako u64
+    lea  rdx, [rcx + 1]
     cmp  rdx, r14
-    jae  LZC_INSERT_DONE                        ; pos+1 >= src_count => koniec
+    jae  LZC_INSERT_DONE
 
-    ; hash(pos) = (src[pos] XOR ROL(src[pos+1], 5)) & HASH_MASK
     mov  r9d,  DWORD PTR [rsi + rcx*4]
     mov  r11d, DWORD PTR [rsi + rcx*4 + 4]
     rol  r11d, 5
     xor  r9d,  r11d
-    and  r9d,  HASH_MASK                        ; r9d = hash
+    and  r9d,  HASH_MASK
 
-    ; slot = pos & (WINDOW_PX-1)
     mov  edx, ecx
-    and  edx, (WINDOW_PX - 1)                  ; edx = slot
+    and  edx, (WINDOW_PX - 1)    ; slot
 
-    ; prev[slot] = head[hash]   (stary head wchodzi na lancuch)
     mov  r11d, DWORD PTR [rbx + r9*4]
     mov  DWORD PTR [rbp + rdx*4], r11d
-
-    ; head[hash] = pos          (pos staje sie nowa glowa lancucha)
     mov  DWORD PTR [rbx + r9*4], ecx
 
     inc  eax
     jmp  LZC_INSERT_LOOP
 
 LZC_INSERT_DONE:
-    ; Przesuniecie: i += bestLen + 1
-    add  r8, r10                                ; i += bestLen
-    inc  r8                                     ; i += 1
+    add  r8, r10
+    inc  r8
     jmp  LZC_MAIN
 
 ; ============================================================
-; Literal: emisja ostatniego piksela (remaining==1)
+; last pixel literal
 ; ============================================================
 LZC_EMIT_LITERAL:
     mov  rax, r15
@@ -392,18 +329,16 @@ LZC_EMIT_LITERAL:
     jb   LZC_FAIL
 
     lea  rcx, [rdi + r12]
-    mov  DWORD PTR [rcx + 0], 0                ; offset = 0
-    mov  DWORD PTR [rcx + 4], 0                ; length = 0
+    mov  DWORD PTR [rcx + 0], 0
+    mov  DWORD PTR [rcx + 4], 0
     mov  eax, DWORD PTR [rsi + r8*4]
-    mov  DWORD PTR [rcx + 8], eax              ; next_px = src[i]
+    mov  DWORD PTR [rcx + 8], eax
     add  r12, TOKEN_SIZE
     inc  r8
     jmp  LZC_MAIN
 
 ; ============================================================
-; Tryb literalow: brak lub za maly bufor roboczy
-; Kazdy piksel -> osobny token (0, 0, src[i]).
-; Prawidlowy wynik -- brak kompresji, ale poprawna dekompresja.
+; literal-only mode
 ; ============================================================
 LZC_LITERAL_ONLY:
     xor  r8d, r8d
@@ -426,14 +361,14 @@ LZC_LIT_LOOP:
     jmp  LZC_LIT_LOOP
 
 ; ============================================================
-; Wyjscia
+; exits
 ; ============================================================
 LZC_FAIL:
-    mov  QWORD PTR [r13], 0                    ; *out_len_bytes = 0
+    mov  QWORD PTR [r13], 0
     jmp  LZC_EXIT
 
 LZC_DONE:
-    mov  QWORD PTR [r13], r12                  ; *out_len_bytes = out_bytes
+    mov  QWORD PTR [r13], r12
 
 LZC_EXIT:
     add  rsp, 16
@@ -451,22 +386,9 @@ lz77_rgba_compress ENDP
 
 ; ============================================================
 ; lz77_rgba_decompress
-;
-; Stala mapa rejestrów nieulotnych:
-;   rsi = src           skompresowany strumien (u8*)
-;   r14 = src_len_bytes dlugosc strumienia w bajtach
-;   rdi = dst_px        bufor wyjsciowy (u32*)
-;   r15 = dst_cap_px    pojemnosc wyjscia w pikselach
-;   r12 = out_px        liczba wypisanych pikseli
-;   r13 = out_len_ptr   wskaznik do *out_len_px
-;   rbx = src_byte_pos  biezaca pozycja odczytu (bajty)
-;   rbp = length_px     pole length z biezacego tokenu
-;
-; Rejestry tymczasowe: rax, rcx, rdx, r8..r11, xmm0
 ; ============================================================
 PUBLIC lz77_rgba_decompress
 lz77_rgba_decompress PROC
-    ; --- Prolog ---
     push rbx
     push rbp
     push rsi
@@ -475,105 +397,76 @@ lz77_rgba_decompress PROC
     push r13
     push r14
     push r15
-    ; Przesuniecie RSP: 8*8 = 64B
-    ; arg5 out_len_px* = [rsp + 64 + 40] = [rsp + 68h]
 
-    ; --- Zaladuj argumenty ---
     mov  rsi, rcx
     mov  r14, rdx
     mov  rdi, r8
     mov  r15, r9
     mov  r13, QWORD PTR [rsp + DECOMP_ARG_OUTLEN]
 
-    xor  r12d, r12d                             ; out_px = 0
-    xor  ebx,  ebx                              ; src_byte_pos = 0
+    xor  r12d, r12d
+    xor  ebx,  ebx
 
-; ============================================================
-; Glowna petla dekompresji
-; ============================================================
 LZD_LOOP:
-    ; Wymaga pelnego tokenu (12 bajtow)
     lea  rax, [rbx + TOKEN_SIZE]
     cmp  rax, r14
     ja   LZD_DONE
 
-    ; Wczytaj pola tokenu
-    mov  eax, DWORD PTR [rsi + rbx]            ; eax = offset_px
-    mov  ebp, DWORD PTR [rsi + rbx + 4]        ; ebp = length_px
-    mov  edx, DWORD PTR [rsi + rbx + 8]        ; edx = next_px
+    mov  eax, DWORD PTR [rsi + rbx]          ; offset_px
+    mov  ebp, DWORD PTR [rsi + rbx + 4]      ; length_px
+    mov  edx, DWORD PTR [rsi + rbx + 8]      ; next_px
+    add  rbx, TOKEN_SIZE
 
-    add  rbx, TOKEN_SIZE                        ; przesun kursor strumienia
-
-    ; --- Literal: offset==0 && length==0 ---
     test eax, eax
     jnz  LZD_MATCH
     test ebp, ebp
     jnz  LZD_MATCH
 
-    cmp  r12, r15                               ; out_px >= dst_cap_px?
+    cmp  r12, r15
     jae  LZD_FAIL
 
-    mov  DWORD PTR [rdi + r12*4], edx          ; dst[out_px] = next_px
+    mov  DWORD PTR [rdi + r12*4], edx
     inc  r12
     jmp  LZD_LOOP
 
-; ============================================================
-; Dopasowanie: skopiuj length_px pikseli, nastepnie next_px
-; ============================================================
 LZD_MATCH:
-    ; Waliduj output: potrzeba length+1 pikseli miejsca
     mov  rcx, r12
-    add  rcx, rbp                               ; out_px + length_px
-    inc  rcx                                    ; + 1 dla next_px
+    add  rcx, rbp
+    inc  rcx
     cmp  rcx, r15
     ja   LZD_FAIL
 
-    ; Waliduj offset: offset=0 przy length>0 jest nieprawidlowy
-    ; (wskazywaloby na niezapisany obszar wyjscia)
     test eax, eax
     jz   LZD_FAIL
 
-    ; Waliduj: offset <= out_px (referencja do juz zapisanego obszaru)
-    cmp  rax, r12                               ; offset (u64) > out_px?
+    cmp  rax, r12
     ja   LZD_FAIL
 
-    ; Indeks startowy zrodla: src_start = out_px - offset_px
     mov  r8, r12
-    sub  r8, rax                                ; r8 = src_start (indeks px)
+    sub  r8, rax
 
-    ; Wskazniki bajtowe
-    lea  r9,  [rdi + r8*4]                     ; r9  = src_ptr  (u8*)
-    lea  r10, [rdi + r12*4]                    ; r10 = dst_ptr  (u8*)
+    lea  r9,  [rdi + r8*4]
+    lea  r10, [rdi + r12*4]
 
-    ; Liczba bajtow do skopiowania = length_px * 4
     mov  r11d, ebp
-    shl  r11d, 2                                ; r11d = bytes_to_copy
+    shl  r11d, 2
 
-    ; --- Wybor sciezki kopiowania ---
-    ; offset_px >= 4: dystans src_ptr -> dst_ptr >= 16B
-    ;   => pierwszy blok SSE2 (16B) nie zachodzi na pierwszy blok zapisu => bezpieczne
-    ;   Pozniejsze bloki moga czytac juz-zapisane piksele: to poprawna semantyka
-    ;   LZ77 i realizuje run-length (np. offset=4, length=100 powtarza 4px x25).
-    ; offset_px <  4: dystans < 16B => SSE2 bylby niepoprawny
-    ;   => kopiowanie skalarne piksel-po-pikselu (rowniez poprawna semantyka RLE)
     cmp  eax, 4
     jb   LZD_SCALAR_COPY
 
-    ; --- SSE2: kopiowanie blokow 4 pikseli (16 bajtow) ---
-    xor  ecx, ecx                               ; byte_offset = 0
+    xor  ecx, ecx
 LZD_SSE2_LOOP:
     mov  eax, r11d
-    sub  eax, ecx                               ; pozostale bajty
+    sub  eax, ecx
     cmp  eax, 16
     jb   LZD_SSE2_TAIL
 
-    movdqu xmm0, XMMWORD PTR [r9 + rcx]        ; czytaj 16B ze zrodla
-    movdqu XMMWORD PTR [r10 + rcx], xmm0       ; zapisz 16B do celu
+    movdqu xmm0, XMMWORD PTR [r9 + rcx]
+    movdqu XMMWORD PTR [r10 + rcx], xmm0
     add  ecx, 16
     jmp  LZD_SSE2_LOOP
 
 LZD_SSE2_TAIL:
-    ; Ogon: mniej niz 16B => kopiuj po jednym pikselu (4B)
     cmp  ecx, r11d
     jae  LZD_COPY_DONE
     mov  eax, DWORD PTR [r9 + rcx]
@@ -581,34 +474,28 @@ LZD_SSE2_TAIL:
     add  ecx, 4
     jmp  LZD_SSE2_TAIL
 
-    ; --- Skalarne kopiowanie (offset_px < 4) ---
-    ; Odczyt moze nastapic po zapisie w tej samej petli -- to zamierzone:
-    ; implementuje poprawna semantyke run-length.
 LZD_SCALAR_COPY:
-    xor  ecx, ecx                               ; byte_offset = 0
+    xor  ecx, ecx
 LZD_SCALAR_LOOP:
     cmp  ecx, r11d
     jae  LZD_COPY_DONE
-    mov  eax, DWORD PTR [r9 + rcx]             ; czytaj piksel (moze byc wlasnie zapisany)
+    mov  eax, DWORD PTR [r9 + rcx]
     mov  DWORD PTR [r10 + rcx], eax
     add  ecx, 4
     jmp  LZD_SCALAR_LOOP
 
 LZD_COPY_DONE:
-    ; out_px += length_px
-    add  r12, rbp                               ; 64-bit (rbp upper bits = 0)
-
-    ; Zapisz next_px
-    mov  DWORD PTR [rdi + r12*4], edx          ; dst[out_px] = next_px
+    add  r12, rbp
+    mov  DWORD PTR [rdi + r12*4], edx
     inc  r12
     jmp  LZD_LOOP
 
 LZD_FAIL:
-    mov  QWORD PTR [r13], 0                    ; *out_len_px = 0
+    mov  QWORD PTR [r13], 0
     jmp  LZD_EXIT
 
 LZD_DONE:
-    mov  QWORD PTR [r13], r12                  ; *out_len_px = out_px
+    mov  QWORD PTR [r13], r12
 
 LZD_EXIT:
     pop  r15

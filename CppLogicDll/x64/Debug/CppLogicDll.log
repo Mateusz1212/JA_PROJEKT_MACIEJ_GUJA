@@ -1,10 +1,10 @@
 ﻿C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VC\v170\Microsoft.CppBuild.targets(524,5): warning MSB8004: Katalog Output nie kończy się ukośnikiem. To wystąpienie kompilacji doda ukośnik, ponieważ jest on niezbędny, aby możliwa była poprawna ocena katalogu Output.
   logic.cpp
-     Trwa tworzenie biblioteki C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Debug\CppLogicDll.lib i obiektu C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Debug\CppLogicDll.exp
-  CppLogicDll.vcxproj -> C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Debug\CppLogicDll.dll
-  C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Debug\CppLogicDll.dll
+     Trwa tworzenie biblioteki C:\Users\macko\Source\Repos\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Debug\CppLogicDll.lib i obiektu C:\Users\macko\Source\Repos\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Debug\CppLogicDll.exp
+  CppLogicDll.vcxproj -> C:\Users\macko\Source\Repos\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Debug\CppLogicDll.dll
+  C:\Users\macko\Source\Repos\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Debug\CppLogicDll.dll
   1 File(s) copied
-  C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Debug\CppDll.dll
+  C:\Users\macko\Source\Repos\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Debug\CppDll.dll
   1 File(s) copied
-  C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Debug\AsmDll.dll
+  C:\Users\macko\Source\Repos\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Debug\AsmDll.dll
   1 File(s) copied
