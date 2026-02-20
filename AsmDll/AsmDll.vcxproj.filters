@@ -9,12 +9,12 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <MASM Include="Blur.asm">
+    <MASM Include="lz77.asm">
       <Filter>Pliki źródłowe</Filter>
     </MASM>
   </ItemGroup>
   <ItemGroup>
-    <None Include="Blur.def">
+    <None Include="lz77.def">
       <Filter>Pliki źródłowe</Filter>
     </None>
   </ItemGroup>

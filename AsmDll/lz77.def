@@ -1,0 +1,4 @@
+LIBRARY AsmDll
+EXPORTS
+lz77_rgba_compress
+lz77_rgba_decompress

@@ -24,6 +24,7 @@
     <ProjectGuid>{b46f19d5-296d-45f5-84ac-feab6bac191d}</ProjectGuid>
     <RootNamespace>BlurLib</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ProjectName>CppDll</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -137,10 +138,10 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="Blur.h" />
+    <ClInclude Include="lz77.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="Blur.cpp" />
+    <ClCompile Include="lz77.cpp" />
     <ClCompile Include="dllmain.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
