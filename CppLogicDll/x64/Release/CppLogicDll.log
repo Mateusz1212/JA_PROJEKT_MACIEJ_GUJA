@@ -1,30 +1,13 @@
 ﻿  logic.cpp
-C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\filesystem(12): warning STL4038: The contents of <filesystem> are available only with C++17 or later.
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.h(22,21): error C2039: „filesystem”: nie jest składową elementu „std”
-  (kompilowanie pliku źródłowego „logic.cpp”)
-      C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include\algorithm(225,1):
-      zobacz deklarację „std”
-  
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.h(22,21): error C2878: "filesystem": przestrzeń nazw lub klasa o tej nazwie nie istnieje
-  (kompilowanie pliku źródłowego „logic.cpp”)
-  
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(311,28): error C2653: "fs": nie jest nazwą klasa lub nazwą przestrzeni nazw
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(311,20): error C2530: "entry": odwołania muszą być zainicjowane
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(311,20): error C3531: „entry”: symbol, którego typ zawiera „auto”, musi mieć inicjator
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(311,26): error C2143: błąd składniowy: brakuje „;” przed „:”
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(311,32): error C3861: "directory_iterator": identyfikatora nie odnaleziono
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(311,64): error C2143: błąd składniowy: brakuje „;” przed „)”
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(358,37): error C2653: "fs": nie jest nazwą klasa lub nazwą przestrzeni nazw
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(358,41): error C3861: "path": identyfikatora nie odnaleziono
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(408,33): error C2653: "fs": nie jest nazwą klasa lub nazwą przestrzeni nazw
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(408,37): error C3861: "path": identyfikatora nie odnaleziono
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(496,28): error C2653: "fs": nie jest nazwą klasa lub nazwą przestrzeni nazw
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(496,20): error C2530: "entry": odwołania muszą być zainicjowane
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(496,20): error C3531: „entry”: symbol, którego typ zawiera „auto”, musi mieć inicjator
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(496,26): error C2143: błąd składniowy: brakuje „;” przed „:”
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(496,32): error C3861: "directory_iterator": identyfikatora nie odnaleziono
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(496,64): error C2143: błąd składniowy: brakuje „;” przed „)”
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(541,37): error C2653: "fs": nie jest nazwą klasa lub nazwą przestrzeni nazw
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(541,41): error C3861: "path": identyfikatora nie odnaleziono
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(584,33): error C2653: "fs": nie jest nazwą klasa lub nazwą przestrzeni nazw
-C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\CppLogicDll\logic.cpp(584,37): error C3861: "path": identyfikatora nie odnaleziono
+     Trwa tworzenie biblioteki C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Release\CppLogicDll.lib i obiektu C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Release\CppLogicDll.exp
+  Trwa generowanie kodu
+  Previous IPDB not found, fall back to full compilation.
+  All 1039 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  Zakończono generowanie kodu
+  CppLogicDll.vcxproj -> C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Release\CppLogicDll.dll
+  C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Release\CppLogicDll.dll
+  1 File(s) copied
+  C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Release\CppDll.dll
+  1 File(s) copied
+  C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Release\AsmDll.dll
+  1 File(s) copied

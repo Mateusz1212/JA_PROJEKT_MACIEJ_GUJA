@@ -135,14 +135,21 @@ xcopy /Y "$(SolutionDir)x64\$(ConfigurationName)\AsmDll.dll"      "$(SolutionDir
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;CPPLOGICDLL_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <PrecompiledHeader>Use</PrecompiledHeader>
-      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeaderFile>
+      </PrecompiledHeaderFile>
+      <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
     </Link>
+    <PostBuildEvent>
+      <Command>xcopy /Y "$(SolutionDir)x64\$(ConfigurationName)\CppLogicDll.dll" "$(SolutionDir)bin\$(ConfigurationName)\net8.0-windows\"
+xcopy /Y "$(SolutionDir)x64\$(ConfigurationName)\CppDll.dll"      "$(SolutionDir)bin\$(ConfigurationName)\net8.0-windows\"
+xcopy /Y "$(SolutionDir)x64\$(ConfigurationName)\AsmDll.dll"      "$(SolutionDir)bin\$(ConfigurationName)\net8.0-windows\"</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="logic.h" />
