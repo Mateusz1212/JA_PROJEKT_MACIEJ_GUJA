@@ -290,7 +290,8 @@ void __stdcall StartCompression(
     bool             useASM,
     int              numThreads,
     ProgressCallback progressCb,
-    LogCallback      logCb)
+    LogCallback      logCb,
+    int64_t* outElapsedMs)
 {
     // --- Ladujemy JEDNA wybrana DLL (nie obie naraz)
     HMODULE          hMod = nullptr;
@@ -340,8 +341,9 @@ void __stdcall StartCompression(
     std::mutex       log_mtx;     // chroni wywolania logCb
     std::atomic<int> processed(0);
 
-    // Pomiar czasu calej operacji
-    auto tstart = std::chrono::steady_clock::now();
+    // Suma czasow wywolan compFn ze wszystkich watkow [nanosekundy].
+    // Kazdy worker dodaje tu czas TYLKO wywolania compFn (nie I/O).
+    std::atomic<long long> algoNs{ 0 };
 
     // --- Worker lambda — kazdy worker przetwarza jeden plik na raz
     auto worker = [&](int workerId) {
@@ -378,13 +380,16 @@ void __stdcall StartCompression(
             // Bufor roboczy LZ77 (head[] + prev[]) — LOGIC_LZ77_WORK_BYTES
             std::vector<uint8_t> work(LOGIC_LZ77_WORK_BYTES);
 
-            // Wywolaj funkcje kompresji z zaladowanej DLL
+            // Wywolaj funkcje kompresji z zaladowanej DLL — TYLKO ten odcinek jest mierzony
             size_t outLen = 0;
             try {
+                auto t0 = std::chrono::steady_clock::now();
                 compFn(pixels.data(), pixelCount,
                     dst.data(), dstCap,
                     work.data(), work.size(),
                     &outLen);
+                auto t1 = std::chrono::steady_clock::now();
+                algoNs += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
             }
             catch (...) {
                 std::lock_guard<std::mutex> lk(log_mtx);
@@ -438,9 +443,9 @@ void __stdcall StartCompression(
         if (t.joinable()) t.join();
     }
 
-    // Pomiar czasu i raport
-    auto tend = std::chrono::steady_clock::now();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(tend - tstart).count();
+    // Przelicz zsumowany czas wywolan compFn na milisekundy i zwroc do C#
+    int64_t elapsedMs = static_cast<int64_t>(algoNs.load() / 1'000'000LL);
+    if (outElapsedMs) *outElapsedMs = elapsedMs;
 
     if (progressCb) progressCb(100);
 
@@ -448,7 +453,7 @@ void __stdcall StartCompression(
     rpt << L"--- Kompresja zakonczona ---\n"
         << L"Plikow: " << totalFiles << L"  |  "
         << L"Watkow: " << actualThreads << L"  |  "
-        << L"Czas: " << ms << L" ms";
+        << L"Czas algorytmu LZ77: " << elapsedMs << L" ms";
     if (logCb) logCb(rpt.str().c_str());
 
     FreeLibrary(hMod);
@@ -475,7 +480,8 @@ void __stdcall StartDecompression(
     bool             useASM,
     int              numThreads,
     ProgressCallback progressCb,
-    LogCallback      logCb)
+    LogCallback      logCb,
+    int64_t* outElapsedMs)
 {
     // --- Ladujemy JEDNA wybrana DLL (nie obie naraz)
     HMODULE            hMod = nullptr;
@@ -525,9 +531,10 @@ void __stdcall StartDecompression(
     std::mutex       log_mtx;
     std::atomic<int> processed(0);
 
-    auto tstart = std::chrono::steady_clock::now();
+    // Suma czasow wywolan decompFn ze wszystkich watkow [nanosekundy].
+    // Kazdy worker dodaje tu czas TYLKO wywolania decompFn (nie I/O).
+    std::atomic<long long> algoNs{ 0 };
 
-    // --- Worker lambda — kazdy worker przetwarza jeden plik .lz77 na raz
     auto worker = [&](int workerId) {
         while (true) {
             std::wstring filePath;
@@ -555,12 +562,15 @@ void __stdcall StartDecompression(
             size_t pixelCount = static_cast<size_t>(w) * h;
             std::vector<uint32_t> pixels(pixelCount, 0);
 
-            // Wywolaj funkcje dekompresji z zaladowanej DLL
+            // Wywolaj funkcje dekompresji z zaladowanej DLL — TYLKO ten odcinek jest mierzony
             size_t outLen = 0;
             try {
+                auto t0 = std::chrono::steady_clock::now();
                 decompFn(compData.data(), compData.size(),
                     pixels.data(), pixelCount,
                     &outLen);
+                auto t1 = std::chrono::steady_clock::now();
+                algoNs += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
             }
             catch (...) {
                 std::lock_guard<std::mutex> lk(log_mtx);
@@ -613,8 +623,9 @@ void __stdcall StartDecompression(
         if (t.joinable()) t.join();
     }
 
-    auto tend = std::chrono::steady_clock::now();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(tend - tstart).count();
+    // Przelicz zsumowany czas wywolan decompFn na milisekundy i zwroc do C#
+    int64_t elapsedMs = static_cast<int64_t>(algoNs.load() / 1'000'000LL);
+    if (outElapsedMs) *outElapsedMs = elapsedMs;
 
     if (progressCb) progressCb(100);
 
@@ -622,7 +633,7 @@ void __stdcall StartDecompression(
     rpt << L"--- Dekompresja zakonczona ---\n"
         << L"Plikow: " << totalFiles << L"  |  "
         << L"Watkow: " << actualThreads << L"  |  "
-        << L"Czas: " << ms << L" ms";
+        << L"Czas algorytmu LZ77: " << elapsedMs << L" ms";
     if (logCb) logCb(rpt.str().c_str());
 
     FreeLibrary(hMod);

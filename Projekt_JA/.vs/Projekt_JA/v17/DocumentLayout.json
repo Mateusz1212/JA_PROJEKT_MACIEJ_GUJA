@@ -1,18 +1,7 @@
 {
   "Version": 1,
-  "WorkspaceRootPath": "C:\\Users\\macko\\source\\repos\\JA_PROJEKT_MACIEJ_GUJA\\Projekt_JA\\",
-  "Documents": [
-    {
-      "AbsoluteMoniker": "D:0:0:{131AE9E9-5656-419A-A409-217079DA1985}|Projekt_JA.csproj|c:\\users\\macko\\source\\repos\\ja_projekt_maciej_guja\\projekt_ja\\program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{131AE9E9-5656-419A-A409-217079DA1985}|Projekt_JA.csproj|solutionrelative:program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{66B3C8F0-7EFE-4429-852E-3EEE0167BFE9}|..\\AsmDll\\AsmDll.vcxproj|C:\\Users\\macko\\Source\\Repos\\JA_PROJEKT_MACIEJ_GUJA\\AsmDll\\lz77.asm||{8B382828-6202-11D1-8870-0000F87579D2}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{C94E3258-A6B1-41C2-8005-503BB256BC98}|..\\CppLogicDll\\CppLogicDll.vcxproj|C:\\Users\\macko\\Source\\Repos\\JA_PROJEKT_MACIEJ_GUJA\\CppLogicDll\\logic.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    }
-  ],
+  "WorkspaceRootPath": "C:\\Users\\user\\Desktop\\JA_PROJEKT_MACIEJ_GUJA\\Projekt_JA\\",
+  "Documents": [],
   "DocumentGroupContainers": [
     {
       "Orientation": 0,
@@ -20,12 +9,8 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 3,
+          "SelectedChildIndex": -1,
           "Children": [
-            {
-              "$type": "Bookmark",
-              "Name": "ST:0:0:{1c4feeaa-4718-4aa9-859d-94ce25d182ba}"
-            },
             {
               "$type": "Bookmark",
               "Name": "ST:0:0:{3ae79031-e1bc-11d0-8f78-00a0c9110057}"
@@ -33,45 +18,6 @@
             {
               "$type": "Bookmark",
               "Name": "ST:0:0:{1c64b9c2-e352-428e-a56d-0ace190b99a6}"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 0,
-              "Title": "Program.cs",
-              "DocumentMoniker": "C:\\Users\\macko\\source\\repos\\JA_PROJEKT_MACIEJ_GUJA\\Projekt_JA\\Program.cs",
-              "RelativeDocumentMoniker": "Program.cs",
-              "ToolTip": "C:\\Users\\macko\\source\\repos\\JA_PROJEKT_MACIEJ_GUJA\\Projekt_JA\\Program.cs",
-              "RelativeToolTip": "Program.cs",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAQAAAAVAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-02-20T22:58:31.833Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 2,
-              "Title": "logic.cpp",
-              "DocumentMoniker": "C:\\Users\\macko\\source\\repos\\JA_PROJEKT_MACIEJ_GUJA\\CppLogicDll\\logic.cpp",
-              "RelativeDocumentMoniker": "..\\CppLogicDll\\logic.cpp",
-              "ToolTip": "C:\\Users\\macko\\source\\repos\\JA_PROJEKT_MACIEJ_GUJA\\CppLogicDll\\logic.cpp",
-              "RelativeToolTip": "..\\CppLogicDll\\logic.cpp",
-              "ViewState": "AgIAAFwCAAAAAAAAAAAiwGcCAAApAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-02-20T22:16:11.816Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 1,
-              "Title": "lz77.asm",
-              "DocumentMoniker": "C:\\Users\\macko\\source\\repos\\JA_PROJEKT_MACIEJ_GUJA\\AsmDll\\lz77.asm",
-              "RelativeDocumentMoniker": "..\\AsmDll\\lz77.asm",
-              "ToolTip": "C:\\Users\\macko\\source\\repos\\JA_PROJEKT_MACIEJ_GUJA\\AsmDll\\lz77.asm",
-              "RelativeToolTip": "..\\AsmDll\\lz77.asm",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAL8AAAAUAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
-              "WhenOpened": "2026-02-20T21:07:46.192Z",
-              "EditorCaption": ""
             }
           ]
         }

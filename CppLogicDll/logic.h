@@ -92,7 +92,8 @@ extern "C" {
             bool             useASM,
             int              numThreads,
             ProgressCallback progressCb,
-            LogCallback      logCb
+            LogCallback      logCb,
+            int64_t* outElapsedMs   // [out] czas samego algorytmu LZ77 w ms
         );
 
     __declspec(dllexport)
@@ -102,6 +103,7 @@ extern "C" {
             bool             useASM,
             int              numThreads,
             ProgressCallback progressCb,
-            LogCallback      logCb
+            LogCallback      logCb,
+            int64_t* outElapsedMs   // [out] czas samego algorytmu LZ77 w ms
         );
 }

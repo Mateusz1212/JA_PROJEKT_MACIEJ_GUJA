@@ -61,7 +61,8 @@ namespace Projekt_JA
             bool useASM,
             int numThreads,
             ProgressCallback progressCb,
-            LogCallback logCb);
+            LogCallback logCb,
+            out long outElapsedMs);
 
         [DllImport("CppLogicDll.dll",
                    CallingConvention = CallingConvention.StdCall,
@@ -72,7 +73,8 @@ namespace Projekt_JA
             bool useASM,
             int numThreads,
             ProgressCallback progressCb,
-            LogCallback logCb);
+            LogCallback logCb,
+            out long outElapsedMs);
 
         // ============================================================
         public Form1()
@@ -212,7 +214,7 @@ namespace Projekt_JA
 
             // Kontrolki z Designera lezace ponizej groupBox3
             Control[] staticControls = { groupBox1, label1, trackBar1,
-                                         label4, label5, label6, button1 };
+                                         label4, label5, label6, button1, labelElapsedTime };
             foreach (var ctrl in staticControls)
                 ctrl.Top += delta;
 
@@ -315,6 +317,7 @@ namespace Projekt_JA
 
             // Zablokuj przycisk na czas operacji
             button1.Enabled = false;
+            labelElapsedTime.Visible = false;
             logTextBox.Clear();
             progressBar.Value = 0;
 
@@ -361,7 +364,9 @@ namespace Projekt_JA
                 // Wywolaj logic.cpp – tworzy N workerow, kompresuje obrazki
                 StartCompression(sourceFolder, tempFolder,
                                  useASM, numThreads,
-                                 progressCb, logCb);
+                                 progressCb, logCb,
+                                 out long elapsedMs);
+                SetElapsedTime(elapsedMs);
 
                 // --- Pakuj wyniki do archiwum ZIP (System.IO.Compression) ---
                 AppendLog("");
@@ -468,7 +473,9 @@ namespace Projekt_JA
                 // Wywolaj logic.cpp – tworzy N workerow, dekompresuje .lz77 → .bmp
                 StartDecompression(tempFolder, outputFolder,
                                    useASM, numThreads,
-                                   progressCb, logCb);
+                                   progressCb, logCb,
+                                   out long elapsedMs);
+                SetElapsedTime(elapsedMs);
 
                 AppendLog("");
                 AppendLog($"Gotowe! Zdekompresowane obrazy w: {outputFolder}");
@@ -503,6 +510,23 @@ namespace Projekt_JA
                     logTextBox.AppendText(message + Environment.NewLine)));
             else
                 logTextBox.AppendText(message + Environment.NewLine);
+        }
+
+        // Wyswietla czas zwrocony przez logic.cpp (tylko wywolania compFn/decompFn)
+        private void SetElapsedTime(long milliseconds)
+        {
+            string text = $"Czas wykonania: {milliseconds} ms";
+            if (labelElapsedTime.InvokeRequired)
+                labelElapsedTime.Invoke(new Action(() =>
+                {
+                    labelElapsedTime.Text = text;
+                    labelElapsedTime.Visible = true;
+                }));
+            else
+            {
+                labelElapsedTime.Text = text;
+                labelElapsedTime.Visible = true;
+            }
         }
 
         // ============================================================

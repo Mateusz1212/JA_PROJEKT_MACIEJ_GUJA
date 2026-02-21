@@ -45,6 +45,7 @@
             label6 = new Label();
             groupBox2 = new GroupBox();
             groupBox3 = new GroupBox();
+            labelElapsedTime = new Label();
             ((System.ComponentModel.ISupportInitialize)trackBar1).BeginInit();
             groupBox1.SuspendLayout();
             groupBox2.SuspendLayout();
@@ -230,6 +231,15 @@
             groupBox3.TabStop = false;
             groupBox3.Text = "Lokalizacja danych";
             // 
+            // labelElapsedTime
+            // 
+            labelElapsedTime.AutoSize = true;
+            labelElapsedTime.Location = new Point(110, 302);
+            labelElapsedTime.Name = "labelElapsedTime";
+            labelElapsedTime.TabIndex = 18;
+            labelElapsedTime.Text = "";
+            labelElapsedTime.Visible = false;
+            // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(8F, 20F);
@@ -237,6 +247,7 @@
             ClientSize = new Size(512, 353);
             Controls.Add(groupBox3);
             Controls.Add(groupBox2);
+            Controls.Add(labelElapsedTime);
             Controls.Add(label6);
             Controls.Add(label5);
             Controls.Add(label4);
@@ -278,5 +289,6 @@
         private Label label6;
         private GroupBox groupBox2;
         private GroupBox groupBox3;
+        private Label labelElapsedTime;
     }
 }
