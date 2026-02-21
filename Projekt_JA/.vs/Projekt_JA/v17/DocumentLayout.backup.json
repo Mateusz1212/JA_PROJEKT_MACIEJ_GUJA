@@ -3,10 +3,7 @@
   "WorkspaceRootPath": "C:\\Users\\user\\Desktop\\JA_PROJEKT_MACIEJ_GUJA\\Projekt_JA\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{B46F19D5-296D-45F5-84AC-FEAB6BAC191D}|..\\CppLib\\BlurLib.vcxproj|C:\\Users\\user\\Desktop\\JA_PROJEKT_MACIEJ_GUJA\\CppLib\\lz77.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{B46F19D5-296D-45F5-84AC-FEAB6BAC191D}|..\\CppLib\\BlurLib.vcxproj|C:\\Users\\user\\Desktop\\JA_PROJEKT_MACIEJ_GUJA\\CppLib\\lz77.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+      "AbsoluteMoniker": "D:0:0:{66B3C8F0-7EFE-4429-852E-3EEE0167BFE9}|..\\AsmDll\\AsmDll.vcxproj|C:\\Users\\user\\Desktop\\JA_PROJEKT_MACIEJ_GUJA\\AsmDll\\lz77.asm||{8B382828-6202-11D1-8870-0000F87579D2}"
     }
   ],
   "DocumentGroupContainers": [
@@ -29,27 +26,14 @@
             {
               "$type": "Document",
               "DocumentIndex": 0,
-              "Title": "lz77.h",
-              "DocumentMoniker": "C:\\Users\\user\\Desktop\\JA_PROJEKT_MACIEJ_GUJA\\CppLib\\lz77.h",
-              "RelativeDocumentMoniker": "..\\CppLib\\lz77.h",
-              "ToolTip": "C:\\Users\\user\\Desktop\\JA_PROJEKT_MACIEJ_GUJA\\CppLib\\lz77.h",
-              "RelativeToolTip": "..\\CppLib\\lz77.h",
-              "ViewState": "AgIAACgAAAAAAAAAAAAswDsAAAAkAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-02-21T05:49:59.801Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 1,
-              "Title": "lz77.cpp",
-              "DocumentMoniker": "C:\\Users\\user\\Desktop\\JA_PROJEKT_MACIEJ_GUJA\\CppLib\\lz77.cpp",
-              "RelativeDocumentMoniker": "..\\CppLib\\lz77.cpp",
-              "ToolTip": "C:\\Users\\user\\Desktop\\JA_PROJEKT_MACIEJ_GUJA\\CppLib\\lz77.cpp",
-              "RelativeToolTip": "..\\CppLib\\lz77.cpp",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAADMBAAABAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-02-21T05:49:57.481Z",
+              "Title": "lz77.asm",
+              "DocumentMoniker": "C:\\Users\\user\\Desktop\\JA_PROJEKT_MACIEJ_GUJA\\AsmDll\\lz77.asm",
+              "RelativeDocumentMoniker": "..\\AsmDll\\lz77.asm",
+              "ToolTip": "C:\\Users\\user\\Desktop\\JA_PROJEKT_MACIEJ_GUJA\\AsmDll\\lz77.asm",
+              "RelativeToolTip": "..\\AsmDll\\lz77.asm",
+              "ViewState": "AgIAAAUCAAAAAAAAAAAiwCYCAAADAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
+              "WhenOpened": "2026-02-21T05:54:40.355Z",
               "EditorCaption": ""
             }
           ]
