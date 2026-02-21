@@ -1,5 +1,4 @@
-﻿
-/********************************************************************************
+﻿/********************************************************************************
  * TEMAT PROJEKTU: Algorytm LZ77 do kompresji obrazków
  * OPIS ALGORYTMU: Implementacja algorytmu LZ77 do kompresji obrazków – odpowiednik kodu asemblerowego MASM x64 napisany w C++
  * DATA WYKONANIA: luty 2026 r.
@@ -380,23 +379,32 @@ static const std::set<std::wstring> IMAGE_EXTENSIONS = {
 // ============================================================
 // WAŻNE: StartCompression — główna funkcja kompresji, eksportowana do C#.
 //
-// Architektura wielowątkowa — wzorzec "thread pool z kolejką zadań":
-//   - Jeden współdzielony std::deque<wstring> przechowuje ścieżki do przetworzenia.
-//   - Każdy worker w pętli pobiera jeden plik z kolejki (sekcja krytyczna),
-//     przetwarza go całkowicie, a potem wraca po następny.
-//   - Brak dedykowanych kolejek per-wątek — naturalne równoważenie obciążenia
-//     (duże pliki automatycznie nie blokują innych wątków).
+// Architektura pomiaru czasu — trzy oddzielne fazy:
 //
-// Bezpieczeństwo wątkowe:
-//   - queue_mtx  — mutex chroniący deque (pobieranie + push_back).
-//   - log_mtx    — mutex chroniący wywołania logCb (P/Invoke nie jest thread-safe).
-//   - processed  — std::atomic<int> — bezpieczny inkrementor bez muteksu.
-//   - algoNs     — std::atomic<long long> — bezpieczne sumowanie czasu ze wszystkich wątków.
+//   FAZA 1 — PRE-LOAD (przed stoperem):
+//     Wszystkie operacje I/O i alokacje pamięci wykonywane są w wątku głównym
+//     zanim stoper zostanie uruchomiony. Dla każdego pliku obrazu:
+//       - wczytanie pikseli RGBA przez GDI+ (LoadImagePixels),
+//       - pre-alokacja bufora wyjściowego dst (worst-case LZ77),
+//       - pre-alokacja bufora roboczego work (head[] + prev[]).
+//     Dzięki temu żadne I/O ani malloc nie wchodzi do sekcji mierzonej.
 //
-// Ważny szczegół pomiaru czasu:
-//   Mierzymy TYLKO czas wywołania compFn(), pomijając I/O (odczyt obrazu, zapis .lz77).
-//   Dzięki temu wynik outElapsedMs odzwierciedla rzeczywistą wydajność algorytmu
-//   LZ77, a nie obciążenie dysku.
+//   FAZA 2 — MIERZONA (tstart … tend):
+//     Obejmuje dokładnie i wyłącznie:
+//       - tworzenie wątków roboczych (emplace_back),
+//       - wywołania compFn() we wszystkich wątkach,
+//       - oczekiwanie na zakończenie wątków (join()).
+//     Wątki NIE wykonują żadnego I/O — operują wyłącznie na pre-alokowanych
+//     buforach w pamięci RAM.
+//
+//   FAZA 3 — POST (po stoperze):
+//     Sekwencyjny zapis wyników na dysk, wywołania logCb i progressCb.
+//
+// Gwarancja poprawności pomiaru:
+//   - Każde wywołanie compFn() jest objęte przedziałem [tstart, tend]. ✓
+//   - Żaden I/O (odczyt obrazu, zapis .lz77) nie wchodzi do [tstart, tend]. ✓
+//   - tstart jest pobierany tuż przed pierwszym emplace_back(). ✓
+//   - tend jest pobierany tuż po ostatnim join(). ✓
 // ============================================================
 void __stdcall StartCompression(
     const wchar_t* sourceFolder,
@@ -410,29 +418,67 @@ void __stdcall StartCompression(
     // --- Ladujemy JEDNA wybrana DLL (nie obie naraz)
     HMODULE          hMod = nullptr;
     LZ77CompressFunc compFn = nullptr;
-    LZ77DecompressFunc decompFn = nullptr;  // ladujemy tez decomp (wymagane przez LoadLZ77DLL)
+    LZ77DecompressFunc decompFn = nullptr;  // wymagane przez LoadLZ77DLL, nieużywane tutaj
     std::wstring dllError;
 
     if (!LoadLZ77DLL(useASM, hMod, compFn, decompFn, dllError)) {
         if (logCb) logCb((L"Blad ladowania DLL: " + dllError).c_str());
         return;
     }
-    if (logCb) logCb(useASM ? L"Zaladowano DLL: Dll_ASM.dll"
-        : L"Zaladowano DLL: Dll_CPP.dll");
+    if (logCb) logCb(useASM ? L"Zaladowano DLL: AsmDll.dll"
+        : L"Zaladowano DLL: CppDll.dll");
 
-    // --- Zbierz pliki obrazkow z sourceFolder do kolejki
-    // WAŻNE: Enumeracja odbywa się PRZED uruchomieniem wątków — unika warunków wyścigu
-    // na dostęp do systemu plików. Wszystkie ścieżki są z góry znane.
-    std::deque<std::wstring> queue;
+    // ============================================================
+    // Struktura zadania kompresji — przechowuje wszystko, czego
+    // potrzebuje wątek roboczy (pre-wczytane dane + pre-alokowane bufory).
+    // Wypełniana w całości w FAZIE 1 (przed stoperem).
+    // ============================================================
+    struct CompressTask {
+        std::wstring          filePath;   // oryginalna ścieżka (do logowania i zapisu)
+        std::vector<uint32_t> pixels;     // pre-wczytane piksele RGBA
+        uint32_t              w = 0;      // szerokość obrazu
+        uint32_t              h = 0;      // wysokość obrazu
+        std::vector<uint8_t>  dst;        // pre-alokowany bufor wyjściowy (tokeny LZ77)
+        std::vector<uint8_t>  work;       // pre-alokowany bufor roboczy (head[] + prev[])
+        size_t                outLen = 0; // [out] liczba zapisanych bajtów po compFn
+        bool                  loadOk = false;    // czy wczytanie obrazu się powiodło
+        bool                  exception = false; // czy compFn rzuciła wyjątek
+    };
+
+    // ============================================================
+    // FAZA 1: PRE-LOAD — wczytanie obrazów i alokacja buforów.
+    //
+    // Wykonywana sekwencyjnie w wątku głównym, PRZED uruchomieniem stopera.
+    // Obejmuje wszystkie operacje I/O i malloc dla wszystkich plików.
+    // ============================================================
+    std::vector<CompressTask> tasks;
+
     try {
         for (auto& entry : fs::directory_iterator(sourceFolder)) {
             if (!entry.is_regular_file()) continue;
             std::wstring ext = entry.path().extension().wstring();
-            // Normalizacja do małych liter — obsługa plików .PNG, .JPG itp.
             std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
-            if (IMAGE_EXTENSIONS.count(ext)) {
-                queue.push_back(entry.path().wstring());
+            if (!IMAGE_EXTENSIONS.count(ext)) continue;
+
+            CompressTask task;
+            task.filePath = entry.path().wstring();
+
+            // Wczytaj piksele RGBA przez GDI+ (I/O — przed stoperem).
+            task.loadOk = LoadImagePixels(task.filePath, task.pixels, task.w, task.h);
+
+            if (task.loadOk) {
+                size_t pixelCount = static_cast<size_t>(task.w) * task.h;
+
+                // Pre-alokuj bufor wyjściowy: pesymistyczny worst-case LZ77.
+                // Token literalny = ~12 B/piksel + 64 B margines na nagłówek strumienia.
+                task.dst.resize(pixelCount * 12u + 64u);
+
+                // Pre-alokuj bufor roboczy: head[65536] + prev[4096] = 272 KB.
+                // Każde zadanie ma własny bufor — brak współdzielenia między wątkami.
+                task.work.resize(LOGIC_LZ77_WORK_BYTES);
             }
+
+            tasks.push_back(std::move(task));
         }
     }
     catch (const std::exception& ex) {
@@ -443,157 +489,107 @@ void __stdcall StartCompression(
         return;
     }
 
-    int totalFiles = static_cast<int>(queue.size());
+    int totalFiles = static_cast<int>(tasks.size());
     if (totalFiles == 0) {
         if (logCb) logCb(L"Brak plikow obrazkow w folderze zrodlowym.");
         FreeLibrary(hMod);
         return;
     }
 
-    // CreateDirectoryW nie zwraca błędu jeśli katalog już istnieje — zachowanie poprawne.
     CreateDirectoryW(outputFolder, nullptr);
 
-    // --- Przygotowanie zmiennych wspoldzielonych miedzy workerami
-    std::mutex       queue_mtx;   // chroni kolejke zadan
-    std::mutex       log_mtx;     // chroni wywolania logCb
-    std::atomic<int> processed(0);
+    // Atomowy indeks zadania — wątki pobierają kolejne zadania przez fetch_add,
+    // bez potrzeby muteksu (brak modyfikacji wektora tasks w wątkach).
+    std::atomic<int> taskIndex{ 0 };
 
-    // Suma czasow wywolan compFn ze wszystkich watkow [nanosekundy].
-    // Kazdy worker dodaje tu czas TYLKO wywolania compFn (nie I/O).
-    std::atomic<long long> algoNs{ 0 };
-
-    // --- Worker lambda — kazdy worker przetwarza jeden plik na raz
-    // WAŻNE: Przechwytujemy przez referencję [&] wszystkie zmienne współdzielone.
-    // Lambda jest bezpieczna, bo zmienne outlive'ują wątki (join() przed końcem funkcji).
-    auto worker = [&](int workerId) {
-        while (true) {
-            // WAŻNE: Sekcja krytyczna — pobieranie pliku z kolejki.
-            // Lock trzymany jak najkrócej (tylko na czas pobrania ścieżki),
-            // aby inne wątki mogły pobierać swoje zadania równolegle podczas
-            // przetwarzania bieżącego pliku.
-            std::wstring filePath;
-            {
-                std::lock_guard<std::mutex> lk(queue_mtx);
-                if (queue.empty()) break;   // brak zadan — koniec petli workera
-                filePath = std::move(queue.front());  // move() unika kopiowania wstring
-                queue.pop_front();
-            }
-
-            std::wstring fileName = fs::path(filePath).filename().wstring();
-
-            // Wczytaj piksele RGBA za pomoca GDI+
-            std::vector<uint32_t> pixels;
-            uint32_t w = 0, h = 0;
-            if (!LoadImagePixels(filePath, pixels, w, h)) {
-                std::lock_guard<std::mutex> lk(log_mtx);
-                if (logCb) logCb((L"[Watek " + std::to_wstring(workerId) +
-                    L"] Nie mozna wczytac: " + fileName).c_str());
-                processed++;
-                if (progressCb) progressCb((processed.load() * 100) / totalFiles);
-                continue;
-            }
-
-            size_t pixelCount = static_cast<size_t>(w) * h;
-
-            // WAŻNE: Rozmiar bufora wyjściowego — pesymistyczny worst-case LZ77.
-            // Jeśli algorytm nie znajdzie żadnych dopasowań (np. obraz szumu losowego),
-            // każdy piksel jest kodowany jako token literalny.
-            // Token literalny LZ77 dla piksela RGBA zajmuje 1 bajt flagi + 4 bajty piksela
-            // + overhead kodowania = ~12 bajtów. Dodatkowe 64 bajty to margines na nagłówek
-            // wewnętrzny strumienia (jeśli DLL go używa).
-            size_t dstCap = pixelCount * 12u + 64u;
-            std::vector<uint8_t> dst(dstCap);
-
-            // WAŻNE: Bufor roboczy LZ77 (head[] + prev[]).
-            // Tablice head[] i prev[] są wymagane przez algorytm LZ77 do szybkiego
-            // wyszukiwania dopasowań w oknie historii.
-            // Rozmiar LOGIC_LZ77_WORK_BYTES = (65536+4096)*4 = 272 KB per wątek.
-            // Każdy wątek ma WŁASNY bufor roboczy (lokalny w lambdzie) —
-            // brak współdzielenia = brak konieczności synchronizacji tych buforów.
-            std::vector<uint8_t> work(LOGIC_LZ77_WORK_BYTES);
-
-            // WAŻNE: Pomiar czasu TYLKO wywołania compFn (bez I/O).
-            // steady_clock — monotonicznie rosnący zegar; nie cofa się przy
-            // zmianie czasu systemowego (w odróżnieniu od system_clock).
-            // try/catch łapie ewentualne wyjątki z DLL (np. access violation
-            // przechwycony przez SEH jako C++ exception z /EHa).
-            size_t outLen = 0;
-            try {
-                auto t0 = std::chrono::steady_clock::now();
-                compFn(pixels.data(), pixelCount,
-                    dst.data(), dstCap,
-                    work.data(), work.size(),
-                    &outLen);
-                auto t1 = std::chrono::steady_clock::now();
-                // WAŻNE: fetch_add jest niejawne w operator+=; operacja jest atomowa.
-                algoNs += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
-            }
-            catch (...) {
-                std::lock_guard<std::mutex> lk(log_mtx);
-                if (logCb) logCb((L"[Watek " + std::to_wstring(workerId) +
-                    L"] Wyjatek podczas kompresji: " + fileName).c_str());
-                processed++;
-                if (progressCb) progressCb((processed.load() * 100) / totalFiles);
-                continue;
-            }
-
-            // Walidacja — outLen == 0 oznacza, że compFn nie wytworzyła żadnych danych.
-            if (outLen == 0) {
-                std::lock_guard<std::mutex> lk(log_mtx);
-                if (logCb) logCb((L"[Watek " + std::to_wstring(workerId) +
-                    L"] Kompresja zwrocila 0 bajtow: " + fileName).c_str());
-                processed++;
-                if (progressCb) progressCb((processed.load() * 100) / totalFiles);
-                continue;
-            }
-
-            // Zapisz plik .lz77 (naglowek + dane) do outputFolder
-            // stem() — nazwa pliku bez rozszerzenia (np. "foto" z "foto.png").
-            std::wstring stem = fs::path(filePath).stem().wstring();
-            std::wstring outFile = std::wstring(outputFolder) + L"\\" + stem + L".lz77";
-
-            if (!WriteCompressedFile(outFile, w, h, dst.data(), outLen)) {
-                std::lock_guard<std::mutex> lk(log_mtx);
-                if (logCb) logCb((L"[Watek " + std::to_wstring(workerId) +
-                    L"] Blad zapisu: " + stem + L".lz77").c_str());
-            }
-            else {
-                std::lock_guard<std::mutex> lk(log_mtx);
-                if (logCb) logCb((L"[Watek " + std::to_wstring(workerId) +
-                    L"] Skompresowano: " + fileName).c_str());
-            }
-
-            // Aktualizacja postępu (thread-safe przez atomic)
-            // processed.load() gwarantuje odczyt aktualnej wartości (nie ze stale rejestru).
-            processed++;
-            if (progressCb) progressCb((processed.load() * 100) / totalFiles);
-        }
-        };
-
-    // --- Uruchom numThreads workerow (min. 1 zgodnie z suwakiiem GUI)
-    // std::max(1, numThreads) zabezpiecza przed wartością 0 lub ujemną z GUI.
+    // ============================================================
+    // FAZA 2: MIERZONA — tworzenie wątków, compFn, join.
+    //
+    // WAŻNE: tstart pobierany tuż przed pierwszym emplace_back().
+    // WAŻNE: tend pobierany tuż po ostatnim join().
+    // Wątki robocze wykonują WYŁĄCZNIE wywołania compFn() na danych
+    // z pre-alokowanych buforów — zero I/O, zero logowania, zero malloc.
+    // ============================================================
     int actualThreads = std::max(1, numThreads);
     std::vector<std::thread> workers;
     workers.reserve(actualThreads);
-    for (int i = 0; i < actualThreads; ++i) {
-        workers.emplace_back(worker, i);  // i = workerId przekazywany do lambdy
-    }
 
-    // --- Czekaj na zakonczenie wszystkich watkow
-    // WAŻNE: join() blokuje wątek wywołujący (wątek C#) do czasu zakończenia
-    // każdego workera. Bez join() zmienne lokalne (queue, algoNs itp.) zostałyby
-    // zniszczone przed zakończeniem wątków — undefined behavior (UB).
-    for (auto& t : workers) {
+    // Worker operuje wyłącznie na pre-alokowanych buforach — żadnego I/O.
+    auto worker = [&]() {
+        while (true) {
+            // fetch_add — atomowe pobranie indeksu bez muteksu.
+            int idx = taskIndex.fetch_add(1, std::memory_order_relaxed);
+            if (idx >= totalFiles) break;
+
+            CompressTask& task = tasks[static_cast<size_t>(idx)];
+            if (!task.loadOk) continue;  // plik nie załadowany — pomiń (wylogowane w FAZIE 3)
+
+            size_t pixelCount = static_cast<size_t>(task.w) * task.h;
+
+            try {
+                compFn(task.pixels.data(), pixelCount,
+                    task.dst.data(), task.dst.size(),
+                    task.work.data(), task.work.size(),
+                    &task.outLen);
+            }
+            catch (...) {
+                task.exception = true;
+            }
+        }
+        };
+
+    // --- tstart: tuż przed pierwszym emplace_back()
+    auto tstart = std::chrono::steady_clock::now();
+
+    for (int i = 0; i < actualThreads; ++i)
+        workers.emplace_back(worker);
+
+    // WAŻNE: join() musi być przed tend — czekamy na zakończenie WSZYSTKICH wątków.
+    for (auto& t : workers)
         if (t.joinable()) t.join();
-    }
 
-    // WAŻNE: Konwersja ns -> ms przez dzielenie całkowitoliczbowe.
-    // algoNs zawiera SUMĘ czasów ze wszystkich wątków (nie czas ścienny wall-clock).
-    // Dla n wątków działających równolegle algoNs ≈ n * czas_wall_clock.
-    // Odpowiedź na pytanie "ile zajął algorytm" to algoNs/n, ale tu zwracamy sumę
-    // zgodnie z kontraktem (C# wyświetla jak chce).
-    int64_t elapsedMs = static_cast<int64_t>(algoNs.load() / 1'000'000LL);
+    // --- tend: tuż po ostatnim join()
+    auto tend = std::chrono::steady_clock::now();
+
+    // ============================================================
+    // FAZA 3: POST — zapis wyników, logowanie, progress.
+    //
+    // Wykonywana sekwencyjnie po zatrzymaniu stopera.
+    // Zawiera wszystkie operacje I/O (zapis .lz77) i wywołania callbacków.
+    // ============================================================
+    int64_t elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        tend - tstart).count();
     if (outElapsedMs) *outElapsedMs = elapsedMs;
+
+    int processed = 0;
+    for (auto& task : tasks) {
+        std::wstring fileName = fs::path(task.filePath).filename().wstring();
+        std::wstring stem = fs::path(task.filePath).stem().wstring();
+
+        if (!task.loadOk) {
+            if (logCb) logCb((L"Nie mozna wczytac obrazu: " + fileName).c_str());
+        }
+        else if (task.exception) {
+            if (logCb) logCb((L"Wyjatek podczas kompresji: " + fileName).c_str());
+        }
+        else if (task.outLen == 0) {
+            if (logCb) logCb((L"Kompresja zwrocila 0 bajtow: " + fileName).c_str());
+        }
+        else {
+            // Zapis pliku .lz77 (I/O — po stoperze).
+            std::wstring outFile = std::wstring(outputFolder) + L"\\" + stem + L".lz77";
+            if (!WriteCompressedFile(outFile, task.w, task.h,
+                task.dst.data(), task.outLen)) {
+                if (logCb) logCb((L"Blad zapisu: " + stem + L".lz77").c_str());
+            }
+            else {
+                if (logCb) logCb((L"Skompresowano: " + fileName).c_str());
+            }
+        }
+
+        ++processed;
+        if (progressCb) progressCb((processed * 100) / totalFiles);
+    }
 
     if (progressCb) progressCb(100);
 
@@ -604,36 +600,28 @@ void __stdcall StartCompression(
         << L"Czas algorytmu LZ77: " << elapsedMs << L" ms";
     if (logCb) logCb(rpt.str().c_str());
 
-    // WAŻNE: FreeLibrary musi być wywołane PO join() na wszystkich wątkach.
-    // Gdyby wątki nadal korzystały z funkcji z DLL po FreeLibrary, nastąpiłby crash
-    // (wykonywanie kodu ze zwolnionej pamięci).
+    // WAŻNE: FreeLibrary po join() — wątki przestały używać kodu z DLL.
     FreeLibrary(hMod);
 }
 
 // ============================================================
 // WAŻNE: StartDecompression — główna funkcja dekompresji, eksportowana do C#.
 //
-// Symetryczna do StartCompression — ta sama architektura wielowątkowa
-// (kolejka + N workerów + muteksy + atomic).
+// Symetryczna architektura trójfazowa jak w StartCompression.
 //
-// Różnice względem StartCompression:
-//   - Wejście: pliki .lz77 (zamiast obrazów)
-//   - Wyjście: pliki .bmp (zamiast .lz77)
-//   - Wywołuje decompFn zamiast compFn
-//   - Brak bufora roboczego (dekompresja LZ77 nie wymaga head[]/prev[])
-//   - Walidacja: outLen musi == pixelCount (width*height), inaczej dane są uszkodzone
+//   FAZA 1 — PRE-LOAD (przed stoperem):
+//     Dla każdego pliku .lz77:
+//       - odczyt nagłówka i danych skompresowanych (ReadCompressedFile),
+//       - pre-alokacja bufora wyjściowego pixels (width * height pikseli).
 //
-// Algorytm:
-//   1. Laduje Dll_CPP.dll lub Dll_ASM.dll (tylko jedna naraz).
-//   2. Zbiera wszystkie pliki .lz77 z sourceFolder do kolejki.
-//   3. Uruchamia numThreads workerow.
-//   4. Kazdy worker w petli:
-//        a) pobiera nastepny plik .lz77 z kolejki (mutex),
-//        b) odczytuje naglowek (wymiary) i dane skompresowane,
-//        c) wywoluje lz77_rgba_decompress z zaladowanej DLL,
-//        d) zapisuje zdekompresowany obraz jako .bmp w outputFolder,
-//        e) inkrementuje licznik i raportuje postep.
-//   5. Po zakonczeniu wszystkich watkow: zwalnia DLL, koniec.
+//   FAZA 2 — MIERZONA (tstart … tend):
+//     Obejmuje dokładnie i wyłącznie:
+//       - tworzenie wątków roboczych (emplace_back),
+//       - wywołania decompFn() we wszystkich wątkach,
+//       - oczekiwanie na zakończenie wątków (join()).
+//
+//   FAZA 3 — POST (po stoperze):
+//     Zapis zdekompresowanych obrazów (.bmp), logowanie, progress.
 // ============================================================
 void __stdcall StartDecompression(
     const wchar_t* sourceFolder,
@@ -646,7 +634,7 @@ void __stdcall StartDecompression(
 {
     // --- Ladujemy JEDNA wybrana DLL (nie obie naraz)
     HMODULE            hMod = nullptr;
-    LZ77CompressFunc   compFn = nullptr;  // wymagane przez LoadLZ77DLL (nie używane tutaj)
+    LZ77CompressFunc   compFn = nullptr;   // wymagane przez LoadLZ77DLL, nieużywane tutaj
     LZ77DecompressFunc decompFn = nullptr;
     std::wstring dllError;
 
@@ -654,20 +642,52 @@ void __stdcall StartDecompression(
         if (logCb) logCb((L"Blad ladowania DLL: " + dllError).c_str());
         return;
     }
-    if (logCb) logCb(useASM ? L"Zaladowano DLL: Dll_ASM.dll"
-        : L"Zaladowano DLL: Dll_CPP.dll");
+    if (logCb) logCb(useASM ? L"Zaladowano DLL: AsmDll.dll"
+        : L"Zaladowano DLL: CppDll.dll");
 
-    // --- Zbierz pliki .lz77 z sourceFolder do kolejki
-    std::deque<std::wstring> queue;
+    // ============================================================
+    // Struktura zadania dekompresji — przechowuje wszystko, czego
+    // potrzebuje wątek roboczy (pre-wczytane dane + pre-alokowany bufor wyjściowy).
+    // ============================================================
+    struct DecompressTask {
+        std::wstring          filePath;          // oryginalna ścieżka (do logowania i zapisu)
+        std::vector<uint8_t>  compData;          // pre-wczytane tokeny LZ77
+        uint32_t              w = 0;             // szerokość obrazu z nagłówka
+        uint32_t              h = 0;             // wysokość obrazu z nagłówka
+        std::vector<uint32_t> pixels;            // pre-alokowany bufor wyjściowy (piksele RGBA)
+        size_t                pixelCount = 0;    // oczekiwana liczba pikseli (w * h)
+        size_t                outLen = 0;        // [out] liczba odtworzonych pikseli po decompFn
+        bool                  loadOk = false;    // czy odczyt .lz77 się powiódł
+        bool                  exception = false; // czy decompFn rzuciła wyjątek
+    };
+
+    // ============================================================
+    // FAZA 1: PRE-LOAD — odczyt plików .lz77 i alokacja buforów.
+    // ============================================================
+    std::vector<DecompressTask> tasks;
+
     try {
         for (auto& entry : fs::directory_iterator(sourceFolder)) {
             if (!entry.is_regular_file()) continue;
             std::wstring ext = entry.path().extension().wstring();
-            // Normalizacja rozszerzenia do małych liter (np. ".LZ77" -> ".lz77").
             std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
-            if (ext == L".lz77") {
-                queue.push_back(entry.path().wstring());
+            if (ext != L".lz77") continue;
+
+            DecompressTask task;
+            task.filePath = entry.path().wstring();
+
+            // Odczyt pliku .lz77 (I/O — przed stoperem).
+            task.loadOk = ReadCompressedFile(task.filePath,
+                task.w, task.h, task.compData);
+
+            if (task.loadOk) {
+                task.pixelCount = static_cast<size_t>(task.w) * task.h;
+                // Pre-alokacja bufora wyjściowego — zerowanie chroni przed śmieciami
+                // w przypadku częściowej dekompresji.
+                task.pixels.assign(task.pixelCount, 0u);
             }
+
+            tasks.push_back(std::move(task));
         }
     }
     catch (const std::exception& ex) {
@@ -678,124 +698,94 @@ void __stdcall StartDecompression(
         return;
     }
 
-    int totalFiles = static_cast<int>(queue.size());
+    int totalFiles = static_cast<int>(tasks.size());
     if (totalFiles == 0) {
         if (logCb) logCb(L"Brak plikow .lz77 w folderze zrodlowym.");
         FreeLibrary(hMod);
         return;
     }
 
-    // Upewnij sie, ze folder wyjsciowy istnieje
     CreateDirectoryW(outputFolder, nullptr);
 
-    // --- Przygotowanie zmiennych wspoldzielonych
-    std::mutex       queue_mtx;
-    std::mutex       log_mtx;
-    std::atomic<int> processed(0);
+    std::atomic<int> taskIndex{ 0 };
 
-    // Suma czasow wywolan decompFn ze wszystkich watkow [nanosekundy].
-    // Kazdy worker dodaje tu czas TYLKO wywolania decompFn (nie I/O).
-    std::atomic<long long> algoNs{ 0 };
-
-    auto worker = [&](int workerId) {
-        while (true) {
-            // Sekcja krytyczna — pobieranie następnego pliku .lz77 z kolejki.
-            std::wstring filePath;
-            {
-                std::lock_guard<std::mutex> lk(queue_mtx);
-                if (queue.empty()) break;   // brak zadan — koniec petli workera
-                filePath = std::move(queue.front());
-                queue.pop_front();
-            }
-
-            std::wstring fileName = fs::path(filePath).filename().wstring();
-
-            // Odczytaj naglowek + dane skompresowane z pliku .lz77
-            uint32_t w = 0, h = 0;
-            std::vector<uint8_t> compData;
-            if (!ReadCompressedFile(filePath, w, h, compData)) {
-                std::lock_guard<std::mutex> lk(log_mtx);
-                if (logCb) logCb((L"[Watek " + std::to_wstring(workerId) +
-                    L"] Nie mozna wczytac lub uszkodzony: " + fileName).c_str());
-                processed++;
-                if (progressCb) progressCb((processed.load() * 100) / totalFiles);
-                continue;
-            }
-
-            // Alokacja bufora wyjściowego — dokładnie pixelCount pikseli RGBA (uint32_t).
-            size_t pixelCount = static_cast<size_t>(w) * h;
-            std::vector<uint32_t> pixels(pixelCount, 0);  // zerowanie = ochrona przed śmieciami
-
-            // WAŻNE: Pomiar czasu TYLKO wywołania decompFn.
-            // Analogicznie do StartCompression — steady_clock + try/catch.
-            size_t outLen = 0;
-            try {
-                auto t0 = std::chrono::steady_clock::now();
-                decompFn(compData.data(), compData.size(),
-                    pixels.data(), pixelCount,
-                    &outLen);
-                auto t1 = std::chrono::steady_clock::now();
-                algoNs += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
-            }
-            catch (...) {
-                std::lock_guard<std::mutex> lk(log_mtx);
-                if (logCb) logCb((L"[Watek " + std::to_wstring(workerId) +
-                    L"] Wyjatek podczas dekompresji: " + fileName).c_str());
-                processed++;
-                if (progressCb) progressCb((processed.load() * 100) / totalFiles);
-                continue;
-            }
-
-            // WAŻNE: Weryfikacja spójności dekompresji.
-            // outLen musi dokładnie równać się pixelCount (width * height).
-            // Niezgodność wskazuje na uszkodzone dane wejściowe lub błąd w DLL.
-            // Jeśli odtworzylibyśmy za mało pikseli, obraz BMP miałby błędną zawartość.
-            if (outLen != pixelCount) {
-                std::lock_guard<std::mutex> lk(log_mtx);
-                if (logCb) logCb((L"[Watek " + std::to_wstring(workerId) +
-                    L"] Niezgodna liczba pikseli po dekompresji: " + fileName).c_str());
-                processed++;
-                if (progressCb) progressCb((processed.load() * 100) / totalFiles);
-                continue;
-            }
-
-            // Zapisz zdekompresowany obraz jako .bmp w outputFolder
-            // stem() — nazwa bez rozszerzenia, np. "foto" z "foto.lz77"
-            std::wstring stem = fs::path(filePath).stem().wstring();
-            std::wstring outFile = std::wstring(outputFolder) + L"\\" + stem + L".bmp";
-
-            if (!SavePixelsAsBMP(outFile, pixels, w, h)) {
-                std::lock_guard<std::mutex> lk(log_mtx);
-                if (logCb) logCb((L"[Watek " + std::to_wstring(workerId) +
-                    L"] Blad zapisu BMP: " + stem).c_str());
-            }
-            else {
-                std::lock_guard<std::mutex> lk(log_mtx);
-                if (logCb) logCb((L"[Watek " + std::to_wstring(workerId) +
-                    L"] Zdekompresowano: " + stem + L".bmp").c_str());
-            }
-
-            processed++;
-            if (progressCb) progressCb((processed.load() * 100) / totalFiles);
-        }
-        };
-
-    // --- Uruchom numThreads workerow
+    // ============================================================
+    // FAZA 2: MIERZONA — tworzenie wątków, decompFn, join.
+    // ============================================================
     int actualThreads = std::max(1, numThreads);
     std::vector<std::thread> workers;
     workers.reserve(actualThreads);
-    for (int i = 0; i < actualThreads; ++i) {
-        workers.emplace_back(worker, i);
-    }
 
-    // --- Czekaj na zakonczenie wszystkich watkow (patrz komentarz w StartCompression).
-    for (auto& t : workers) {
+    // Worker operuje wyłącznie na pre-alokowanych buforach — żadnego I/O.
+    auto worker = [&]() {
+        while (true) {
+            int idx = taskIndex.fetch_add(1, std::memory_order_relaxed);
+            if (idx >= totalFiles) break;
+
+            DecompressTask& task = tasks[static_cast<size_t>(idx)];
+            if (!task.loadOk) continue;  // plik nie załadowany — pomiń (wylogowane w FAZIE 3)
+
+            try {
+                decompFn(task.compData.data(), task.compData.size(),
+                    task.pixels.data(), task.pixelCount,
+                    &task.outLen);
+            }
+            catch (...) {
+                task.exception = true;
+            }
+        }
+        };
+
+    // --- tstart: tuż przed pierwszym emplace_back()
+    auto tstart = std::chrono::steady_clock::now();
+
+    for (int i = 0; i < actualThreads; ++i)
+        workers.emplace_back(worker);
+
+    // WAŻNE: join() musi być przed tend — czekamy na zakończenie WSZYSTKICH wątków.
+    for (auto& t : workers)
         if (t.joinable()) t.join();
-    }
 
-    // Przelicz zsumowany czas wywolan decompFn na milisekundy i zwroc do C#
-    int64_t elapsedMs = static_cast<int64_t>(algoNs.load() / 1'000'000LL);
+    // --- tend: tuż po ostatnim join()
+    auto tend = std::chrono::steady_clock::now();
+
+    // ============================================================
+    // FAZA 3: POST — zapis wyników, logowanie, progress.
+    // ============================================================
+    int64_t elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        tend - tstart).count();
     if (outElapsedMs) *outElapsedMs = elapsedMs;
+
+    int processed = 0;
+    for (auto& task : tasks) {
+        std::wstring fileName = fs::path(task.filePath).filename().wstring();
+        std::wstring stem = fs::path(task.filePath).stem().wstring();
+
+        if (!task.loadOk) {
+            if (logCb) logCb((L"Nie mozna wczytac lub uszkodzony: " + fileName).c_str());
+        }
+        else if (task.exception) {
+            if (logCb) logCb((L"Wyjatek podczas dekompresji: " + fileName).c_str());
+        }
+        else if (task.outLen != task.pixelCount) {
+            // WAŻNE: outLen musi dokładnie równać się pixelCount.
+            // Niezgodność wskazuje na uszkodzone dane lub błąd w DLL.
+            if (logCb) logCb((L"Niezgodna liczba pikseli po dekompresji: " + fileName).c_str());
+        }
+        else {
+            // Zapis zdekompresowanego obrazu jako .bmp (I/O — po stoperze).
+            std::wstring outFile = std::wstring(outputFolder) + L"\\" + stem + L".bmp";
+            if (!SavePixelsAsBMP(outFile, task.pixels, task.w, task.h)) {
+                if (logCb) logCb((L"Blad zapisu BMP: " + stem).c_str());
+            }
+            else {
+                if (logCb) logCb((L"Zdekompresowano: " + stem + L".bmp").c_str());
+            }
+        }
+
+        ++processed;
+        if (progressCb) progressCb((processed * 100) / totalFiles);
+    }
 
     if (progressCb) progressCb(100);
 
@@ -806,6 +796,6 @@ void __stdcall StartDecompression(
         << L"Czas algorytmu LZ77: " << elapsedMs << L" ms";
     if (logCb) logCb(rpt.str().c_str());
 
-    // WAŻNE: FreeLibrary po join() — patrz komentarz w StartCompression.
+    // WAŻNE: FreeLibrary po join() — wątki przestały używać kodu z DLL.
     FreeLibrary(hMod);
 }

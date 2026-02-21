@@ -1,4 +1,1 @@
-﻿  Assembling lz77.asm...
-     Trwa tworzenie biblioteki C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Release\AsmDll.lib i obiektu C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Release\AsmDll.exp
-  LINK : określono opcję /LTCG, lecz generowanie kodu nie było wymagane; usuń opcję /LTCG z wiersza polecenia konsolidatora w celu podwyższenia wydajności konsolidatora
-  AsmDll.vcxproj -> C:\Users\user\Desktop\JA_PROJEKT_MACIEJ_GUJA\Projekt_JA\x64\Release\AsmDll.dll
+﻿
