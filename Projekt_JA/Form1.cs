@@ -13,6 +13,7 @@ namespace Projekt_JA
         private bool isCompression = true;
         private string sourcePath = string.Empty;
         private string destinationPath = string.Empty;
+        private string Pathtozip = string.Empty;
 
         // Rozmiary groupBox3
         private const int GroupBox3FullHeight = 95;
@@ -247,8 +248,8 @@ namespace Projekt_JA
                 openDialog.Filter = "Pliki ZIP|*.zip";
                 if (openDialog.ShowDialog() == DialogResult.OK)
                 {
-                    sourcePath = openDialog.FileName;
-                    label2.Text = sourcePath;
+                    Pathtozip = openDialog.FileName;
+                    label2.Text = Pathtozip;
                 }
             }
         }
@@ -296,7 +297,7 @@ namespace Projekt_JA
         private async void button1_Click(object sender, EventArgs e)
         {
             // Walidacja sciezek przed startem
-            if (string.IsNullOrWhiteSpace(sourcePath))
+            if (isCompression && string.IsNullOrWhiteSpace(sourcePath))
             {
                 MessageBox.Show("Wybierz sciezke zrodlowa.",
                                 "Blad", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -308,12 +309,19 @@ namespace Projekt_JA
                                 "Blad", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
+            if (!isCompression && string.IsNullOrWhiteSpace(Pathtozip))
+            {
+                MessageBox.Show("Wybierz sciezke pliku .zip!",
+                                "Blad", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
 
             // Odczytaj parametry z GUI przed przelaczeniem na inny watek
             bool useASM = radioButton2.Checked;
             int numThreads = trackBar1.Value;
             string src = sourcePath;
             string dst = destinationPath;
+            string zip = Pathtozip;
 
             // Zablokuj przycisk na czas operacji
             button1.Enabled = false;
@@ -324,7 +332,7 @@ namespace Projekt_JA
             if (isCompression)
                 await Task.Run(() => RunCompression(src, dst, useASM, numThreads));
             else
-                await Task.Run(() => RunDecompression(src, useASM, numThreads));
+                await Task.Run(() => RunDecompression(zip, useASM, numThreads));
 
             button1.Enabled = true;
         }
@@ -539,5 +547,10 @@ namespace Projekt_JA
         private void label2_Click(object sender, EventArgs e) { }
         private void label6_Click(object sender, EventArgs e) { }
         private void label5_Click(object sender, EventArgs e) { }
+
+        private void groupBox2_Enter(object sender, EventArgs e)
+        {
+
+        }
     }
 }
