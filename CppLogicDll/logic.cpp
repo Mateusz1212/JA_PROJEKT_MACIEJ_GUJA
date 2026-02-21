@@ -1,16 +1,12 @@
-﻿/*******************************************************************************
- * PLIK: logic.cpp
- * OPIS: Kontroler wielowatkowosci dla kompresji/dekompresji obrazkow LZ77.
- *       Eksportuje dwie funkcje wywoływane przez Form1.cs (P/Invoke):
- *         - StartCompression   : N workerow kompresuje obrazki → pliki .lz77
- *         - StartDecompression : N workerow dekompresuje .lz77 → obrazki .bmp
- *       Kazdy worker przetwarza JEDEN plik jednoczesnie i pobiera nastepny
- *       z kolejki chronionej mutexem, gdy skonczy (pula watkow).
- *       Funkcje LZ77 ladowane sa dynamicznie z Dll_CPP.dll lub Dll_ASM.dll
- *       (nie obu naraz) zgodnie z wyborem uzytkownika w GUI.
- *       GDI+ sluzy do wczytywania formatow PNG/JPG/BMP/TIFF/GIF oraz
- *       zapisywania zdekompresowanych pikselí jako pliki BMP.
- ******************************************************************************/
+﻿
+/********************************************************************************
+ * TEMAT PROJEKTU: Algorytm LZ77 do kompresji obrazków
+ * OPIS ALGORYTMU: Implementacja algorytmu LZ77 do kompresji obrazków – odpowiednik kodu asemblerowego MASM x64 napisany w C++
+ * DATA WYKONANIA: luty 2026 r.
+ * SEMESTR / ROK AKADEMICKI: Semestr Zimowy 2025/2026
+ * AUTOR: Maciej Guja
+ * AKTUALNA WERSJA: 1.1
+ ********************************************************************************/
 
 #define NOMINMAX
 #undef max

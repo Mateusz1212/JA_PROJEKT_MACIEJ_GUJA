@@ -1,7 +1,7 @@
-﻿/********************************************************************************
+﻿
+/********************************************************************************
  * TEMAT PROJEKTU: Algorytm LZ77 do kompresji obrazków
- * OPIS ALGORYTMU: Implementacja algorytmu LZ77 do kompresji obrazków –
- *                 odpowiednik kodu asemblerowego MASM x64 napisany w C++
+ * OPIS ALGORYTMU: Implementacja algorytmu LZ77 do kompresji obrazków – odpowiednik kodu asemblerowego MASM x64 napisany w C++
  * DATA WYKONANIA: luty 2026 r.
  * SEMESTR / ROK AKADEMICKI: Semestr Zimowy 2025/2026
  * AUTOR: Maciej Guja
